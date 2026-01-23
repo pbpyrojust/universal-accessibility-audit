@@ -86,13 +86,20 @@ function loadUrlsFromFile(filePath) {
     .map(normalizeUrl);
 }
 
-async function crawlInternalLinks(page, startUrl, maxPages) {
+async function crawlInternalLinks(page, startUrl, maxPages, opts = {}) {
+  const { isAllowedUrl = null, slow = false, crawlDelayMs = 0 } = opts;
   const origin = new URL(startUrl).origin;
   const queue = [normalizeUrl(startUrl)];
   const seen = new Set(queue);
 
   while (queue.length && seen.size < maxPages) {
     const current = queue.shift();
+    if (isAllowedUrl && !isAllowedUrl(current)) {
+      continue;
+    }
+    if (slow && crawlDelayMs) {
+      await new Promise((r) => setTimeout(r, crawlDelayMs));
+    }
     try {
       await page.goto(current, { waitUntil: "domcontentloaded", timeout: 60000 });
       const hrefs = await page.$$eval("a[href]", (as) =>
@@ -276,6 +283,158 @@ function sheetFilterUrl(sheetId, gid, column, value) {
   return `https://docs.google.com/spreadsheets/d/${safeId}/edit#gid=${safeGid}&q=${column}%3A${v}`;
 }
 
+
+function sleep(ms) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+function classifyBotChallenge({ status, title, html }) {
+  const t = (title || "").toLowerCase();
+  const h = (html || "").toLowerCase();
+
+  // Cloudflare bot challenge pages often include these markers
+  if (
+    h.includes("/cdn-cgi/challenge-platform") ||
+    h.includes("__cf_chl") ||
+    h.includes("cf-challenge") ||
+    t.includes("just a moment") ||
+    t.includes("attention required")
+  ) {
+    return "cloudflare_challenge";
+  }
+
+  // Common WAF / bot protection vendors
+  if (h.includes("incapsula") || h.includes("_incapsula_resource")) return "imperva_incapsula";
+  if (h.includes("akamai") && h.includes("reference #")) return "akamai";
+  if (h.includes("datadome") && (h.includes("captcha") || h.includes("blocked"))) return "datadome";
+
+  // Generic access denied / rate limit hints
+  if (status === 401) return "http_401";
+  if (status === 403) return "http_403";
+  if (status === 429) return "http_429";
+  if (status === 503) return "http_503";
+
+  return "";
+}
+
+async function detectBotProtection(page, response) {
+  try {
+    const status = response ? response.status() : 0;
+    const title = await page.title().catch(() => "");
+    // page.content() can be heavy; still okay for challenge detection since these pages are small.
+    const html = await page.content().catch(() => "");
+    const type = classifyBotChallenge({ status, title, html });
+    return { detected: Boolean(type), type, status, title };
+  } catch {
+    return { detected: false, type: "", status: 0, title: "" };
+  }
+}
+
+async function fetchRobotsDisallow(origin) {
+  try {
+    const res = await fetch(new URL("/robots.txt", origin).toString(), {
+      redirect: "follow",
+      headers: { "user-agent": "Universal-A11y-Audit (Playwright + axe-core)" },
+    });
+    if (!res.ok) return [];
+    const txt = await res.text();
+
+    // Minimal robots parser: only respects User-agent: * then Disallow: rules.
+    let active = false;
+    const disallow = [];
+    for (const rawLine of txt.split(/\r?\n/)) {
+      const line = rawLine.replace(/#.*/, "").trim();
+      if (!line) continue;
+      const mUa = line.match(/^user-agent\s*:\s*(.+)$/i);
+      if (mUa) {
+        active = mUa[1].trim() === "*";
+        continue;
+      }
+      if (!active) continue;
+      const mDis = line.match(/^disallow\s*:\s*(.*)$/i);
+      if (mDis) {
+        const rule = (mDis[1] || "").trim();
+        // empty means allow all
+        if (rule) disallow.push(rule);
+      }
+    }
+    return disallow;
+  } catch {
+    return [];
+  }
+}
+
+function makeRobotsTester(disallowRules) {
+  const patterns = [];
+  for (const rule of disallowRules || []) {
+    const r = (rule || "").trim();
+    if (!r) continue;
+
+    // Convert robots wildcards to a regex on pathname.
+    // Examples: /private/  -> ^/private/
+    //           /*.pdf$   -> ^/.*\.pdf$
+    let re = "^" + r.replace(/[.*+?^${}()|[\]\\]/g, "\$&");
+    re = re.replace(/\\*/g, ".*");
+    patterns.push(new RegExp(re));
+  }
+
+  return function isAllowed(urlStr) {
+    try {
+      const u = new URL(urlStr);
+      const p = u.pathname;
+      for (const pat of patterns) {
+        if (pat.test(p)) return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+}
+
+async function gotoWithRetry(page, url, opts) {
+  const {
+    slow = false,
+    retries = 1,
+    backoffMs = 3000,
+    timeoutMs = 90000,
+  } = opts || {};
+
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const waitUntil = slow ? "domcontentloaded" : "networkidle";
+      const response = await page.goto(url, { waitUntil, timeout: timeoutMs });
+      if (slow) await page.waitForTimeout(800);
+
+      const bot = await detectBotProtection(page, response);
+      if (bot.detected) {
+        // Treat bot challenges as a soft failure; optionally retry.
+        lastErr = new Error(`bot_protection:${bot.type}`);
+        if (attempt < retries) {
+          const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
+          console.warn(`   ⚠ Bot protection detected (${bot.type}, status ${bot.status}). Backing off ${Math.ceil(delay/1000)}s then retrying...`);
+          await sleep(delay);
+          continue;
+        }
+        return { response, bot };
+      }
+
+      return { response, bot };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) {
+        const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
+        console.warn(`   ⚠ Navigation failed (${String(e?.message || e)}). Backing off ${Math.ceil(delay/1000)}s then retrying...`);
+        await sleep(delay);
+        continue;
+      }
+      break;
+    }
+  }
+  throw lastErr || new Error("Navigation failed");
+}
+
 async function main() {
   const args = parseArgs(process.argv);
 
@@ -290,18 +449,52 @@ async function main() {
   const startUrl = args.start ? normalizeUrl(args.start) : "https://example.com/";
   const maxPages = args["max-pages"] ? Number(args["max-pages"]) : 50;
 
+  const slow = Boolean(args.slow);
+  const respectRobots = Boolean(args["respect-robots"]);
+  const retries = args.retries ? Number(args.retries) : (slow ? 2 : 1);
+  const backoffMs = args["backoff-ms"] ? Number(args["backoff-ms"]) : (slow ? 8000 : 3000);
+  const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (slow ? 1500 : 0);
+
+  if (slow) {
+    console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
+  }
+  if (respectRobots) {
+    console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
+  }
+
+  let isAllowedUrl = null;
+  if (respectRobots) {
+    const origin = new URL(startUrl).origin;
+    const disallow = await fetchRobotsDisallow(origin);
+    isAllowedUrl = makeRobotsTester(disallow);
+    if (disallow.length) {
+      console.log(`ℹ robots.txt Disallow rules loaded: ${disallow.length}`);
+    } else {
+      console.log("ℹ robots.txt: no Disallow rules found (or robots.txt not accessible).");
+    }
+  }
+
   let urls = [];
   if (args.crawl) {
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     const page = await context.newPage();
-    urls = await crawlInternalLinks(page, startUrl, maxPages);
+    urls = await crawlInternalLinks(page, startUrl, maxPages, { isAllowedUrl, slow, crawlDelayMs });
     await browser.close();
   } else if (args["urls-file"]) {
     const filePath = path.resolve(process.cwd(), args["urls-file"]);
     urls = loadUrlsFromFile(filePath);
   } else {
     urls = [startUrl];
+  }
+
+  if (isAllowedUrl) {
+    const before = urls.length;
+    urls = urls.filter((u) => {
+      try { return isAllowedUrl(u); } catch { return true; }
+    });
+    const removed = before - urls.length;
+    if (removed > 0) console.log(`ℹ robots.txt filtered out ${removed} URL(s).`);
   }
 
   // Scan
@@ -340,8 +533,40 @@ async function main() {
     };
 
     try {
-      await page.goto(url, { waitUntil: "networkidle", timeout: 90000 });
-      await page.waitForTimeout(800);
+      const nav = await gotoWithRetry(page, url, { slow, retries, backoffMs, timeoutMs: 90000 });
+      if (nav.bot && nav.bot.detected) {
+        pageResult.ok = false;
+        pageResult.error = `bot_protection:${nav.bot.type}`;
+
+        csvRows.push({
+          scope: "Page",
+          page_url: url,
+          rule_id: "bot_protection",
+          impact: "serious",
+          priority: "P1-High",
+          wcag_refs: "",
+          help: "Bot protection / challenge page detected",
+          help_url: "",
+          description: `Bot protection detected during scan (${nav.bot.type}, status ${nav.bot.status}).`,
+          failure_summary: "Automated audit cannot run on challenge pages. Use --slow, reduce scan frequency, and consider allowlisting this scanner or scanning from a trusted network.",
+          selector_target: "",
+          html_snippet: "",
+          is_global_candidate: "no",
+          suggested_github_issue: "bot_protection",
+          rule_filter_url: sheetFilterUrl(sheetId, sheetGid, "rule_id", "bot_protection"),
+          impact_filter_url: sheetFilterUrl(sheetId, sheetGid, "impact", "serious"),
+          page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
+          recommendation: "Re-run later with --slow and fewer pages. If the site uses Cloudflare/WAF, consider allowlisting your scanning IP or using an authenticated scanner environment.",
+        });
+
+        const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
+        const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
+        console.log(`   ↳ BOT CHALLENGE (${nav.bot.type}) in ${elapsed}s | elapsed: ${totalElapsed}m`);
+
+        siteResults.push(pageResult);
+        if (slow) await sleep(750 + Math.floor(Math.random() * 1250));
+        continue;
+      }
 
       // Collect image alt text inventory for SEO + accessibility review (non-fatal)
 try {
@@ -479,6 +704,7 @@ try {
     }
 
     siteResults.push(pageResult);
+    if (slow) await sleep(750 + Math.floor(Math.random() * 1250));
   }
 
   await browser.close();

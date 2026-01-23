@@ -120,6 +120,42 @@ If sitemap discovery fails, you can opt into crawl mode:
 node scripts/run-audit.mjs --site https://example.com --fallback-crawl --max-pages 75
 ```
 
+
+---
+
+## Bot protection, rate limits, and responsible scanning
+
+Many sites use **Cloudflare** or other web application firewalls (WAF/bot protection). Repeated automated browser scans can trigger:
+- Challenge pages ("Just a moment…", CAPTCHA, interstitial checks)
+- Temporary blocks (403/429), throttling, or inconsistent results
+
+This tool will attempt to **detect common bot challenge pages** and will tag them explicitly in the output as:
+- `rule_id = bot_protection` (instead of producing misleading WCAG violations from a challenge page)
+
+### Conservative scanning options
+Use these flags when scanning production sites, Cloudflare-protected properties, or whenever you want to be cautious:
+
+- `--slow` — adds a delay between pages and enables retry/backoff defaults.
+- `--respect-robots` — attempts to read `robots.txt` and *skips* disallowed URLs (best-effort).
+
+Example:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --slow \
+  --respect-robots
+```
+
+### Retry / backoff tuning
+You can also override retry behavior:
+
+- `--retries 2` — number of additional navigation retries (beyond the first attempt)
+- `--backoff-ms 8000` — base backoff delay in milliseconds (exponential)
+- `--crawl-delay-ms 1500` — delay between discovered pages during crawl mode
+
+> If you see bot protection warnings in the terminal or `bot_protection` rows in the CSV, back off and try again later (or scan from a whitelisted IP / staging environment).
+
 ---
 
 ## Google Sheets evidence links (recommended workflow)

@@ -131,6 +131,13 @@ function main() {
   if (args["sheet-id"]) auditArgs.push("--sheet-id", args["sheet-id"]);
   if (args["sheet-gid"]) auditArgs.push("--sheet-gid", args["sheet-gid"]);
 
+  // conservative scanning options (pass-through to a11y-audit)
+  if (args["slow"]) auditArgs.push("--slow");
+  if (args["respect-robots"]) auditArgs.push("--respect-robots");
+  if (args["retries"]) auditArgs.push("--retries", String(args["retries"]));
+  if (args["backoff-ms"]) auditArgs.push("--backoff-ms", String(args["backoff-ms"]));
+  if (args["crawl-delay-ms"]) auditArgs.push("--crawl-delay-ms", String(args["crawl-delay-ms"]));
+
   if (useCrawl) {
     auditArgs.push("--crawl", "--start", site, "--max-pages", String(args["max-pages"] || 50));
   } else {
