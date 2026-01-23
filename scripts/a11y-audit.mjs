@@ -152,6 +152,106 @@ function mapImpactToPriority(impact) {
 function extractWcagRefs(tags = []) {
   const sc = tags.filter((t) => /^wcag\d+/.test(t));
   return sc.length ? sc.join(" | ") : "";
+
+
+function normalizeWhitespace(s) {
+  return String(s || "").replace(/\s+/g, " ").trim();
+}
+
+function looksLikeFilename(s) {
+  const v = (s || "").toLowerCase();
+  if (!v) return false;
+  if (/(\.png|\.jpg|\.jpeg|\.gif|\.webp|\.svg)$/i.test(v)) return true;
+  // common camera / wp patterns
+  if (/^(img|dsc|pxl|image)[-_\s]?\d+/.test(v)) return true;
+  // many separators and no spaces
+  const hasSep = /[_-]/.test(v);
+  const hasSpace = /\s/.test(v);
+  const hasLetters = /[a-z]/.test(v);
+  return hasLetters && hasSep && !hasSpace && v.length >= 8;
+}
+
+function suggestedAltFromSrc(src) {
+  try {
+    const u = new URL(src);
+    const base = (u.pathname.split("/").pop() || "").split("?")[0].split("#")[0];
+    const noExt = base.replace(/\.[a-z0-9]+$/i, "");
+    const cleaned = noExt
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\d{2,}\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!cleaned) return "";
+    // sentence-ish case
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  } catch {
+    return "";
+  }
+}
+
+function rateAltText(alt, src) {
+  const a = normalizeWhitespace(alt);
+  const issues = [];
+  let score = 100;
+
+  if (a === "") {
+    // Could be decorative; not necessarily wrong, but needs human confirmation.
+    issues.push("alt_empty");
+    score = 80;
+    const sug = suggestedAltFromSrc(src);
+    return {
+      score,
+      rating: "Needs review",
+      issues: issues.join("|"),
+      suggested_alt: sug
+        ? `If informative, use something like: ${sug}`
+        : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='').",
+    };
+  }
+
+  if (!a) {
+    issues.push("alt_missing");
+    score = 0;
+  }
+
+  if (a && a.length < 4) {
+    issues.push("too_short");
+    score -= 30;
+  }
+
+  if (a && a.length > 125) {
+    issues.push("too_long");
+    score -= 20;
+  }
+
+  if (looksLikeFilename(a)) {
+    issues.push("looks_like_filename");
+    score -= 60;
+  }
+
+  if (/\b(copy|image|photo|picture)\b/i.test(a) && a.length <= 12) {
+    issues.push("too_generic");
+    score -= 25;
+  }
+
+  // clamp
+  score = Math.max(0, Math.min(100, score));
+  const rating = score >= 85 ? "Good" : score >= 60 ? "OK" : score >= 35 ? "Poor" : "Bad";
+
+  let suggested = "";
+  if (issues.includes("alt_missing") || issues.includes("looks_like_filename") || issues.includes("too_generic")) {
+    const sug = suggestedAltFromSrc(src);
+    suggested = sug ? sug : "";
+  }
+
+  return {
+    score,
+    rating,
+    issues: issues.join("|"),
+    suggested_alt: suggested || "",
+  };
+}
+
 }
 
 function getRunIdFromNow() {
@@ -215,6 +315,7 @@ async function main() {
 
   const siteResults = [];
   const csvRows = [];
+  const imageAltRows = [];
 
   const startedAt = Date.now();
   let totalViolationNodes = 0;
@@ -243,6 +344,43 @@ async function main() {
     try {
       await page.goto(url, { waitUntil: "networkidle", timeout: 90000 });
       await page.waitForTimeout(800);
+
+      // Collect image alt text inventory for SEO + accessibility review
+      const imgs = await page.evaluate(() => {
+        const out = [];
+        const els = Array.from(document.querySelectorAll('img'));
+        for (let i = 0; i < els.length; i++) {
+          const el = els[i];
+          const src = el.currentSrc || el.getAttribute('src') || '';
+          const alt = el.getAttribute('alt');
+          const title = el.getAttribute('title') || '';
+          // create a lightweight locator
+          const id = el.id ? `#${el.id}` : '';
+          const cls = (el.className && typeof el.className === 'string') ? '.' + el.className.trim().split(/\s+/).slice(0,3).join('.') : '';
+          const locator = (id || cls) ? `img${id}${cls}` : 'img';
+          out.push({ src, alt: alt === null ? '' : alt, alt_present: alt !== null, title, locator });
+        }
+        return out;
+      });
+
+      for (const im of imgs) {
+        if (!im.src) continue;
+        let abs = im.src;
+        try { abs = new URL(im.src, url).toString(); } catch {}
+        const rated = rateAltText(im.alt_present ? im.alt : '', abs);
+        imageAltRows.push({
+          page_url: url,
+          image_url: abs,
+          alt_text: normalizeWhitespace(im.alt_present ? im.alt : ''),
+          alt_present: im.alt_present ? 'yes' : 'no',
+          title_text: normalizeWhitespace(im.title || ''),
+          locator: normalizeWhitespace(im.locator || ''),
+          readability_score: rated.score,
+          readability_rating: rated.rating,
+          issues: rated.issues,
+          suggested_alt: rated.suggested_alt,
+        });
+      }
 
       const axe = await runAxe(page);
       pageResult.axe = axe;
@@ -358,6 +496,24 @@ async function main() {
     "recommendation",
   ];
   fs.writeFileSync(csvOut, stringify(csvRows, { header: true, columns }));
+
+
+// Image alt text inventory report (SEO + accessibility)
+const altCsvOut = path.join(outDir, "a11y-image-alts.csv");
+const altColumns = [
+  "page_url",
+  "image_url",
+  "alt_present",
+  "alt_text",
+  "title_text",
+  "locator",
+  "readability_score",
+  "readability_rating",
+  "issues",
+  "suggested_alt",
+];
+fs.writeFileSync(altCsvOut, stringify(imageAltRows, { header: true, columns: altColumns }));
+
 
   const meta = {
     runId,

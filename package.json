@@ -12,17 +12,17 @@
     "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
-    "axe-core": "^4.10.2",
-    "csv-stringify": "^6.5.1",
+    "axe-core": "^4.11.1",
+    "csv-stringify": "^6.6.0",
     "fast-xml-parser": "^5.3.3",
-    "playwright": "^1.49.1"
+    "playwright": "^1.57.0"
   },
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Universal accessibility audit runner (Playwright + axe-core) with sitemap discovery and ticket-ready outputs.",
   "author": "Justin Adams <justin@justwhat.net> (https://justwhat.net)",
   "homepage": "https://justwhat.net",
   "license": "MIT",
   "devDependencies": {
-    "husky": "^9.0.11"
+    "husky": "^9.1.7"
   }
 }

@@ -1,7 +1,7 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
 **Created by:** Justin Adams — JustWhat.net — justin@justwhat.net
-**Version:** 0.1.1
+**Version:** 0.1.0
 
 A universal, command-line accessibility audit tool that:
 - Builds a scan URL list from a site's sitemap (Yoast/WP core/standard sitemap.xml)
@@ -15,7 +15,7 @@ A universal, command-line accessibility audit tool that:
 ---
 
 ## Requirements
-- **Node.js 18+** (recommended)
+- **Node.js 20+ (LTS recommended)** (tested with Node 20/22/24)
 - npm (or pnpm/yarn)
 - Playwright browser install (Chromium)
 
@@ -166,6 +166,23 @@ You can either:
 > Limitation: CSV import cannot auto-create Google Sheets *filter views*. The evidence links are designed to be low-effort jump links for browsing evidence by rule / impact / page.
 
 ---
+
+
+
+## Image alt text inventory report (SEO + accessibility)
+
+Each run also generates:
+
+- `a11y-image-alts.csv` — an inventory of images found during the scan, including:
+  - the page the image appears on
+  - the resolved image URL
+  - the current alt text (or whether it is missing/empty)
+  - a simple readability score + rating
+  - suggested improvements (especially useful when alt text is a filename)
+
+Notes:
+- Empty alt text (`alt=""`) can be valid for decorative images, but should be reviewed.
+- Automated suggestions cannot know intent; use this report to prioritize improvements quickly.
 
 ## Ticketing workflow (GitHub Projects)
 

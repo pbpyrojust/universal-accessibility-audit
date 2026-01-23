@@ -159,6 +159,23 @@ function maxPriority(a, b) {
   return (order[a] ?? 99) <= (order[b] ?? 99) ? a : b;
 }
 
+
+function descriptionFor(t) {
+  // Keep this single-line and paste-friendly for GitHub Issues
+  const parts = [];
+  const scope = t.ticket_type === "Global" ? "Global/site-wide" : "Page-specific";
+  parts.push(`${scope} accessibility issue detected by automated scan (Playwright + axe-core).`);
+  if (t.wcag_refs) parts.push(`WCAG refs: ${t.wcag_refs}.`);
+  if (t.pages_affected) parts.push(`Pages affected: ${t.pages_affected}.`);
+  if (t.violation_nodes) parts.push(`Violating nodes: ${t.violation_nodes}.`);
+  if (t.ticket_type === "Page" && t.page_url) parts.push(`Page: ${t.page_url}.`);
+  // Evidence links
+  if (t.rule_evidence_url) parts.push(`Rule evidence: ${t.rule_evidence_url}`);
+  if (t.page_evidence_url) parts.push(`Page evidence: ${t.page_evidence_url}`);
+  parts.push("Acceptance: resolve the underlying component/pattern, re-run audit, and confirm the rule no longer appears.");
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
 function labelsFor({ ticket_type, priority }) {
   const base = ["accessibility", "wcag", "audit"];
   if (ticket_type === "Global") base.push("global");
@@ -359,6 +376,7 @@ function main() {
     if (t.page_url) t.page_evidence_url = sheetFilterUrl(sheetId, sheetGid, "page_url", t.page_url);
 
     // github formatting
+    t.github_description = descriptionFor(t);
     t.github_title = titleFor(t);
     t.github_labels = labelsFor(t);
   }
@@ -366,6 +384,7 @@ function main() {
   for (const t of pageKeyed.values()) {
     t.rule_evidence_url = sheetFilterUrl(sheetId, sheetGid, "rule_id", t.rule_id);
     t.page_evidence_url = sheetFilterUrl(sheetId, sheetGid, "page_url", t.page_url);
+    t.github_description = descriptionFor(t);
     t.github_title = titleFor(t);
     t.github_labels = labelsFor(t);
   }
@@ -398,6 +417,7 @@ function main() {
     "rule_evidence_url",
     "page_evidence_url",
     "priority_evidence_url",
+    "github_description",
     "github_title",
     "github_labels",
   ];
