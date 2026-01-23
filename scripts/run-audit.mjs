@@ -34,6 +34,28 @@ function parseArgs(argv) {
   return args;
 }
 
+function parseGoogleSheetUrl(sheetUrl) {
+  try {
+    const u = new URL(sheetUrl);
+
+    // Expected format: https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit...
+    const m = u.pathname.match(/\/spreadsheets\/d\/([^/]+)\//);
+    const sheetId = m?.[1] || "";
+
+    // gid can be in the query (?gid=0) or fragment (#gid=0)
+    const gidFromQuery = u.searchParams.get("gid");
+    const gidFromHash = (u.hash || "").match(/gid=(\d+)/)?.[1] || null;
+    const sheetGid = gidFromQuery || gidFromHash || "0";
+
+    return {
+      sheetId,
+      sheetGid,
+    };
+  } catch {
+    return { sheetId: "", sheetGid: "" };
+  }
+}
+
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { stdio: "inherit" });
   if (r.status !== 0) process.exit(r.status ?? 1);
@@ -58,6 +80,19 @@ function main() {
   if (!site) {
     console.error("ERROR: Missing --site https://example.com");
     process.exit(1);
+  }
+
+  // Optional: accept a full Google Sheets URL and extract sheet-id + sheet-gid.
+  // This avoids any post-run find/replace for evidence links.
+  if (args["sheet-url"] && !args["sheet-id"]) {
+    const { sheetId, sheetGid } = parseGoogleSheetUrl(String(args["sheet-url"]).trim());
+    if (sheetId) {
+      args["sheet-id"] = sheetId;
+      if (!args["sheet-gid"] && sheetGid) args["sheet-gid"] = sheetGid;
+      console.log(`\nUsing Google Sheet evidence links: sheet-id=${sheetId} gid=${args["sheet-gid"] || "0"}`);
+    } else {
+      console.warn("\nWARN: Could not parse --sheet-url. Evidence links will use SHEET_ID placeholder.");
+    }
   }
 
   const outDir = args["out-dir"] || "reports";

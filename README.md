@@ -122,26 +122,48 @@ node scripts/run-audit.mjs --site https://example.com --fallback-crawl --max-pag
 
 ---
 
-## Google Sheets helper links (ticket evidence)
+## Google Sheets evidence links (recommended workflow)
 
-The generated CSV includes 3 helper columns:
-- `rule_filter_url`
-- `impact_filter_url`
-- `page_filter_url`
+This toolkit can generate ready-to-click **Google Sheets evidence links** inside the CSV outputs (for quick “jump to evidence” when creating tickets).
 
-These are **Google Sheets links** containing a `SHEET_ID` placeholder.
+### Recommended process (no manual find/replace)
 
-### How to use
-1) Import `a11y-violations.csv` into Google Sheets
-2) Copy your spreadsheet ID from the URL:
-   - `https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit...`
-3) Use Find & Replace in Sheets:
-   - Find: `SHEET_ID`
-   - Replace with: your real spreadsheet id
+1) Create a **blank Google Sheet** (any name is fine).
+2) Copy the full Sheet URL from your browser. It looks like:
 
-Now the links become clickable “evidence views” per rule / impact / page.
+   `https://docs.google.com/spreadsheets/d/1abcDEF_exampleSheetId/edit?gid=0#gid=0`
 
-> Limitation: CSV import cannot auto-create Google Sheets *filter views*. The helper links are designed to be low-effort evidence jump links.
+3) Run the audit and pass the Sheet URL:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --sheet-url "https://docs.google.com/spreadsheets/d/1abcDEF_exampleSheetId/edit?gid=0#gid=0"
+```
+
+The runner will automatically extract:
+- the **Sheet ID** (the long string between `/d/` and `/edit`)
+- the **gid** (the tab id, typically `0` for a new sheet)
+
+All evidence links will be fully populated in:
+- `a11y-violations.csv`
+- `a11y-github-tickets.csv`
+- `a11y-summary-google-doc.md`
+
+### Import step
+
+After the run:
+1) Import `a11y-violations.csv` into your Google Sheet (File → Import).
+2) Use evidence links from `a11y-github-tickets.csv` inside your GitHub Issues.
+
+### If you do NOT pass --sheet-url
+
+If `--sheet-url` is omitted, evidence URLs will contain a placeholder `SHEET_ID`.
+You can either:
+- re-run with `--sheet-url`, **or**
+- replace `SHEET_ID` with your spreadsheet ID using Find & Replace after import.
+
+> Limitation: CSV import cannot auto-create Google Sheets *filter views*. The evidence links are designed to be low-effort jump links for browsing evidence by rule / impact / page.
 
 ---
 
@@ -229,7 +251,8 @@ This is designed for dropping into a GitHub Project "Issues" column quickly.
 
 ### Google Sheets ID replacement
 Evidence links in both CSVs are generated using either:
-- `--sheet-id <YOUR_SHEET_ID>` and optional `--sheet-gid <gid>` when running, **or**
+- `--sheet-url "<YOUR_GOOGLE_SHEET_URL>"` (recommended), **or**
+- `--sheet-id <YOUR_SHEET_ID>` and optional `--sheet-gid <gid>`, **or**
 - a placeholder `SHEET_ID` (default)
 
 If you used the placeholder:

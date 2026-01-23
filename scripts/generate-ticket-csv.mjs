@@ -49,78 +49,97 @@ function sheetFilterUrl(sheetId, gid, column, value) {
 }
 
 function parseCsv(csvText) {
-  // Minimal RFC4180-ish parser (handles quotes + commas).
+  // RFC4180-ish parser that supports commas, quotes, and newlines inside quoted fields.
+  // Returns an array of objects keyed by header names.
   const rows = [];
-  let i = 0;
-  const len = csvText.length;
-
-  function readLine() {
-    if (i >= len) return null;
-    let line = "";
-    while (i < len) {
-      const ch = csvText[i++];
-      if (ch === "\n") break;
-      if (ch === "\r") {
-        if (csvText[i] === "\n") i++;
-        break;
-      }
-      line += ch;
-    }
-    return line;
-  }
-
-  const headerLine = readLine();
-  if (headerLine == null) return [];
-  const headers = splitCsvLine(headerLine);
-
-  let line;
-  while ((line = readLine()) !== null) {
-    if (!line.trim()) continue;
-    const cols = splitCsvLine(line);
-    const obj = {};
-    for (let c = 0; c < headers.length; c++) {
-      obj[headers[c]] = cols[c] ?? "";
-    }
-    rows.push(obj);
-  }
-  return rows;
-}
-
-function splitCsvLine(line) {
-  const out = [];
-  let cur = "";
+  let row = [];
+  let field = "";
   let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+
+  const pushField = () => {
+    row.push(field);
+    field = "";
+  };
+
+  const pushRow = () => {
+    // Skip completely empty rows
+    if (row.length === 1 && row[0] === "") {
+      row = [];
+      return;
+    }
+    rows.push(row);
+    row = [];
+  };
+
+  for (let i = 0; i < csvText.length; i++) {
+    const ch = csvText[i];
+
     if (inQuotes) {
       if (ch === '"') {
-        if (line[i + 1] === '"') {
-          cur += '"';
+        // Escaped quote
+        if (csvText[i + 1] === '"') {
+          field += '"';
           i++;
         } else {
           inQuotes = false;
         }
       } else {
-        cur += ch;
+        field += ch;
       }
-    } else {
-      if (ch === ",") {
-        out.push(cur);
-        cur = "";
-      } else if (ch === '"') {
-        inQuotes = true;
-      } else {
-        cur += ch;
-      }
+      continue;
     }
+
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+
+    if (ch === ",") {
+      pushField();
+      continue;
+    }
+
+    if (ch === "\n") {
+      pushField();
+      pushRow();
+      continue;
+    }
+
+    if (ch === "\r") {
+      // Handle CRLF or lone CR
+      if (csvText[i + 1] === "\n") i++;
+      pushField();
+      pushRow();
+      continue;
+    }
+
+    field += ch;
   }
-  out.push(cur);
-  return out;
+
+  // Flush last field/row
+  pushField();
+  pushRow();
+
+  if (!rows.length) return [];
+
+  const headers = rows[0].map((h) => String(h || "").trim());
+  const data = [];
+  for (let r = 1; r < rows.length; r++) {
+    const cols = rows[r];
+    if (!cols || !cols.length) continue;
+    const obj = {};
+    for (let c = 0; c < headers.length; c++) {
+      obj[headers[c]] = cols[c] ?? "";
+    }
+    // Skip rows that don't have a rule_id (likely parser artifacts)
+    data.push(obj);
+  }
+  return data;
 }
 
 function toCsv(rows, columns) {
   const esc = (v) => {
-    const s = String(v ?? "");
+    const s = String(v ?? "").replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
     if (/[",\n\r]/.test(s)) {
       return '"' + s.replace(/"/g, '""') + '"';
     }
@@ -322,6 +341,8 @@ function main() {
     // example pages: pick 5
     const pages = Array.from(rulePages.get(t.rule_id) || []).slice(0, 5);
     t.example_pages = pages;
+    // Representative page to make CSV easier to read/sort
+    t.page_url = pages[0] || "";
 
     // example selectors: top 3
     const selMap = ruleSelectors.get(t.rule_id);
@@ -335,6 +356,7 @@ function main() {
     // evidence links
     t.rule_evidence_url = sheetFilterUrl(sheetId, sheetGid, "rule_id", t.rule_id);
     t.priority_evidence_url = sheetFilterUrl(sheetId, sheetGid, "priority", t.priority);
+    if (t.page_url) t.page_evidence_url = sheetFilterUrl(sheetId, sheetGid, "page_url", t.page_url);
 
     // github formatting
     t.github_title = titleFor(t);

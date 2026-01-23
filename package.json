@@ -8,7 +8,7 @@
     "audit": "node scripts/run-audit.mjs --site https://www.example.com",
     "audit:crawl": "node scripts/a11y-audit.mjs --crawl --start https://www.example.com --max-pages 50 --out-dir reports",
     "report": "node scripts/generate-google-doc-report.mjs --run-dir reports/latest",
-    "prepare": "husky install",
+    "prepare": "husky",
     "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
@@ -17,7 +17,7 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.49.1"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Universal accessibility audit runner (Playwright + axe-core) with sitemap discovery and ticket-ready outputs.",
   "author": "Justin Adams <justin@justwhat.net> (https://justwhat.net)",
   "homepage": "https://justwhat.net",
