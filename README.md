@@ -1,7 +1,7 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
 **Created by:** Justin Adams — JustWhat.net — justin@justwhat.net
-**Version:** 0.1.0
+**Version:** 0.1.1
 
 A universal, command-line accessibility audit tool that:
 - Builds a scan URL list from a site's sitemap (Yoast/WP core/standard sitemap.xml)
