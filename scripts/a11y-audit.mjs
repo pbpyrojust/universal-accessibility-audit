@@ -152,7 +152,7 @@ function mapImpactToPriority(impact) {
 function extractWcagRefs(tags = []) {
   const sc = tags.filter((t) => /^wcag\d+/.test(t));
   return sc.length ? sc.join(" | ") : "";
-
+}
 
 function normalizeWhitespace(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
@@ -252,8 +252,6 @@ function rateAltText(alt, src) {
   };
 }
 
-}
-
 function getRunIdFromNow() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -345,42 +343,56 @@ async function main() {
       await page.goto(url, { waitUntil: "networkidle", timeout: 90000 });
       await page.waitForTimeout(800);
 
-      // Collect image alt text inventory for SEO + accessibility review
-      const imgs = await page.evaluate(() => {
-        const out = [];
-        const els = Array.from(document.querySelectorAll('img'));
-        for (let i = 0; i < els.length; i++) {
-          const el = els[i];
-          const src = el.currentSrc || el.getAttribute('src') || '';
-          const alt = el.getAttribute('alt');
-          const title = el.getAttribute('title') || '';
-          // create a lightweight locator
-          const id = el.id ? `#${el.id}` : '';
-          const cls = (el.className && typeof el.className === 'string') ? '.' + el.className.trim().split(/\s+/).slice(0,3).join('.') : '';
-          const locator = (id || cls) ? `img${id}${cls}` : 'img';
-          out.push({ src, alt: alt === null ? '' : alt, alt_present: alt !== null, title, locator });
-        }
-        return out;
-      });
+      // Collect image alt text inventory for SEO + accessibility review (non-fatal)
+try {
+  const imgs = await page.evaluate(() => {
+    const out = [];
+    const els = Array.from(document.querySelectorAll('img'));
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i];
+      const src = el.currentSrc || el.getAttribute('src') || '';
+      const alt = el.getAttribute('alt');
+      const title = el.getAttribute('title') || '';
+      // create a lightweight locator
+      const id = el.id ? `#${el.id}` : '';
+      const cls = (el.className && typeof el.className === 'string') ? '.' + el.className.trim().split(/\s+/).slice(0,3).join('.') : '';
+      const locator = (id || cls) ? `img${id}${cls}` : 'img';
+      out.push({ src, alt: alt === null ? '' : alt, alt_present: alt !== null, title, locator });
+    }
+    return out;
+  });
 
-      for (const im of imgs) {
-        if (!im.src) continue;
-        let abs = im.src;
-        try { abs = new URL(im.src, url).toString(); } catch {}
-        const rated = rateAltText(im.alt_present ? im.alt : '', abs);
-        imageAltRows.push({
-          page_url: url,
-          image_url: abs,
-          alt_text: normalizeWhitespace(im.alt_present ? im.alt : ''),
-          alt_present: im.alt_present ? 'yes' : 'no',
-          title_text: normalizeWhitespace(im.title || ''),
-          locator: normalizeWhitespace(im.locator || ''),
-          readability_score: rated.score,
-          readability_rating: rated.rating,
-          issues: rated.issues,
-          suggested_alt: rated.suggested_alt,
-        });
-      }
+  for (const im of imgs) {
+    if (!im.src) continue;
+    let abs = im.src;
+    try { abs = new URL(im.src, url).toString(); } catch {}
+    // rateAltText is a Node-side helper; keep this block defensive so it never breaks page scanning
+    let rated = { score: 0, rating: "Needs review", issues: "alt_unrated", suggested_alt: "" };
+    try {
+      rated = rateAltText(im.alt_present ? im.alt : '', abs);
+    } catch (e) {
+      rated = { score: 0, rating: "Needs review", issues: `alt_rating_error:${String(e?.message || e)}`, suggested_alt: "" };
+    }
+
+    imageAltRows.push({
+      page_url: url,
+      image_url: abs,
+      alt_present: im.alt_present ? "yes" : "no",
+      alt_text: normalizeWhitespace(im.alt_present ? im.alt : ''),
+      title_text: normalizeWhitespace(im.title || ''),
+      locator: im.locator || 'img',
+      readability_score: rated.score,
+      readability_rating: rated.rating,
+      issues: rated.issues,
+      suggested_alt: rated.suggested_alt,
+    });
+  }
+} catch (e) {
+  // Never fail the page scan due to alt reporting
+  console.warn(`   ↳ Alt report skipped for ${url}: ${String(e?.message || e)}`);
+}
+
+
 
       const axe = await runAxe(page);
       pageResult.axe = axe;
