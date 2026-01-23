@@ -17,7 +17,7 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.49.1"
   },
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Universal accessibility audit runner (Playwright + axe-core) with sitemap discovery and ticket-ready outputs.",
   "author": "Justin Adams <justin@justwhat.net> (https://justwhat.net)",
   "homepage": "https://justwhat.net",
