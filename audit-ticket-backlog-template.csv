@@ -1,0 +1,9 @@
+Scope,URL,Issue Title,WCAG SC,Priority,Fix Summary,Example Selector/Element,Notes / Screenshot Link
+Global,All Pages,Skip link missing or not focusable,2.4.1,P1-High,Add a visible-on-focus 'Skip to main content' link before header/nav; set href to #main and ensure focus moves to main region.,header skip link,
+Global,All Pages,Keyboard focus indicator not visible on links/buttons,2.4.7,P1-High,Add :focus-visible styles (outline/ring) for all interactive elements; do not remove outlines without replacement.,"a, button, input, [tabindex]",
+Global,All Pages,Insufficient text contrast in buttons/links,1.4.3,P1-High,Ensure text contrast >= 4.5:1 (3:1 for large text). Verify hover/active/disabled states as well.,CSS color tokens for CTAs/links,
+Global,All Pages,Form fields missing programmatic labels,1.3.1 / 3.3.2,P1-High,Use <label for=> + id or aria-labelledby for every input/select/textarea; do not rely on placeholder as label.,forms (contact/newsletter),
+Global,All Pages,Non-text contrast for icons/controls below 3:1,1.4.11,P2-Medium,"Ensure UI components (icons, borders, focus rings) meet 3:1 against adjacent colors.","icons, input borders, toggles",
+Global,All Pages,Heading order not logical (skipped levels/multiple H1s),1.3.1 / 2.4.6,P2-Medium,Use one H1 per page; ensure sequential heading structure and meaningful section headings.,h1-h6,
+Page,https://www.example.com/,Images missing alt or decorative images not empty-alt,1.1.1,P2-Medium,Provide meaningful alt text for informative images; set alt='' for decorative images; ensure linked images have alt that conveys purpose.,"img[alt], img:not([alt])",
+Page,https://www.example.com/insights/whitepapers/,"Link text is generic ('Read more', 'Click here')",2.4.4,P2-Medium,Make link text descriptive: include whitepaper title in link text or add aria-label/aria-labelledby.,a,

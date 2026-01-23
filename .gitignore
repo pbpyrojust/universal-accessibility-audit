@@ -1,0 +1,4 @@
+node_modules/
+reports/
+# optional local url list
+scripts/urls.txt

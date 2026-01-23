@@ -1,0 +1,28 @@
+{
+  "name": "universal-accessibility-audit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:urls": "node scripts/build-urls-from-sitemap.mjs --site https://www.example.com --out scripts/urls.txt",
+    "audit:urls": "node scripts/a11y-audit.mjs --urls-file scripts/urls.txt --out-dir reports",
+    "audit": "node scripts/run-audit.mjs --site https://www.example.com",
+    "audit:crawl": "node scripts/a11y-audit.mjs --crawl --start https://www.example.com --max-pages 50 --out-dir reports",
+    "report": "node scripts/generate-google-doc-report.mjs --run-dir reports/latest",
+    "prepare": "husky install",
+    "version:bump": "node scripts/bump-version.mjs"
+  },
+  "dependencies": {
+    "axe-core": "^4.10.2",
+    "csv-stringify": "^6.5.1",
+    "fast-xml-parser": "^5.3.3",
+    "playwright": "^1.49.1"
+  },
+  "version": "0.1.0",
+  "description": "Universal accessibility audit runner (Playwright + axe-core) with sitemap discovery and ticket-ready outputs.",
+  "author": "Justin Adams <justin@justwhat.net> (https://justwhat.net)",
+  "homepage": "https://justwhat.net",
+  "license": "MIT",
+  "devDependencies": {
+    "husky": "^9.0.11"
+  }
+}

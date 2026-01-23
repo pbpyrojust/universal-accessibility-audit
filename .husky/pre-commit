@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Auto-bump patch version on every commit
+npm run -s version:bump
+
+# Stage package.json so the bumped version is included in the commit
+git add package.json
