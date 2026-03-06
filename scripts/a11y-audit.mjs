@@ -1,24 +1,4 @@
 #!/usr/bin/env node
-/**
- * a11y-audit.mjs
- *
- * Automated accessibility audit: Playwright + axe-core
- *
- * Outputs (in a timestamped run folder):
- *  - a11y-report.json (full per-page results)
- *  - a11y-violations.csv (one row per violating node)
- *  - a11y-run-metadata.json (summary counts for reporting)
- *
- * Features:
- *  - Progress logging with per-page timing
- *  - Timestamped reports (prevents overwriting)
- *  - Google Sheets helper links included in CSV (with SHEET_ID placeholder or --sheet-id)
- *
- * Usage examples:
- *   node scripts/a11y-audit.mjs --urls-file scripts/urls.txt --out-dir reports
- *   node scripts/a11y-audit.mjs --crawl --start https://example.com --max-pages 75 --out-dir reports
- */
-
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,51 +19,112 @@ function parseArgs(argv) {
     else if (a.startsWith("--")) {
       const key = a.replace(/^--/, "");
       const next = argv[i + 1];
-      if (!next || next.startsWith("--")) {
-        args[key] = true;
-      } else {
-        args[key] = next;
-        i++;
-      }
+      if (!next || next.startsWith("--")) args[key] = true;
+      else { args[key] = next; i++; }
     }
   }
   return args;
 }
 
-function ensureDir(p) {
-  fs.mkdirSync(p, { recursive: true });
-}
+function ensureDir(p) { fs.mkdirSync(p, { recursive: true }); }
 
 function normalizeUrl(u) {
   try {
     const url = new URL(u);
-    // normalize trailing slash for consistency (except root)
-    if (url.pathname !== "/" && url.pathname.endsWith("/")) {
-      url.pathname = url.pathname.slice(0, -1);
-    }
+    if (url.pathname !== "/" && url.pathname.endsWith("/")) url.pathname = url.pathname.slice(0, -1);
     url.hash = "";
     return url.toString();
   } catch {
-    return u;
-  }
-}
-
-function isSameOrigin(u, origin) {
-  try {
-    return new URL(u).origin === origin;
-  } catch {
-    return false;
+    return String(u || "").trim();
   }
 }
 
 function loadUrlsFromFile(filePath) {
-  const raw = fs.readFileSync(filePath, "utf8");
-  return raw
+  return fs.readFileSync(filePath, "utf8")
     .split(/\r?\n/g)
-    .map((l) => l.trim())
+    .map(s => s.trim())
     .filter(Boolean)
-    .filter((l) => !l.startsWith("#"))
+    .filter(s => !s.startsWith("#"))
     .map(normalizeUrl);
+}
+
+function isSameOrigin(u, origin) {
+  try { return new URL(u).origin === origin; } catch { return false; }
+}
+
+function normalizeWhitespace(s) { return String(s || "").replace(/\s+/g, " ").trim(); }
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+function detectBotChallengeHtml(html = "", status = 0) {
+  const s = String(html || "").toLowerCase();
+  return {
+    detected:
+      [403, 429, 503].includes(Number(status)) ||
+      s.includes("cf-browser-verification") ||
+      s.includes("just a moment") ||
+      s.includes("attention required") ||
+      s.includes("verify you are human") ||
+      s.includes("cloudflare") ||
+      s.includes("captcha"),
+    type: s.includes("cloudflare") || s.includes("cf-browser-verification") || s.includes("just a moment")
+      ? "cloudflare"
+      : s.includes("captcha") ? "captcha"
+      : [403,429,503].includes(Number(status)) ? `http_${status}` : "unknown",
+    status: Number(status) || 0,
+  };
+}
+
+async function fetchText(url, timeoutMs = 30000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      signal: ac.signal,
+      headers: {
+        "user-agent": "Universal-A11y-Audit",
+        "accept": "text/plain, text/html, application/xml, text/xml, */*",
+      },
+    });
+    return { ok: res.ok, status: res.status, text: await res.text() };
+  } catch (e) {
+    return { ok: false, status: 0, text: "", error: String(e?.message || e) };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function buildRobotsMatcher(startUrl) {
+  try {
+    const robotsUrl = new URL("/robots.txt", startUrl).toString();
+    const res = await fetchText(robotsUrl, 20000);
+    if (!res.ok || !res.text) return { isAllowedUrl: null, crawlDelayMs: 0 };
+    const disallows = [];
+    let crawlDelayMs = 0;
+    for (const line of res.text.split(/\r?\n/g)) {
+      const trimmed = line.trim();
+      const m = /^disallow:\s*(.+)$/i.exec(trimmed);
+      if (m) disallows.push(m[1].trim());
+      const cd = /^crawl-delay:\s*(\d+)$/i.exec(trimmed);
+      if (cd && !crawlDelayMs) crawlDelayMs = Number(cd[1]) * 1000;
+    }
+    function isAllowedUrl(url) {
+      try {
+        const u = new URL(url);
+        const pathWithQuery = `${u.pathname}${u.search || ""}`;
+        for (const rule of disallows) {
+          if (!rule || rule === "/") continue;
+          const normalized = rule.replace(/\*$/,"");
+          if (pathWithQuery.startsWith(normalized) || pathWithQuery.includes(normalized.replace(/\*/g, ""))) return false;
+        }
+        return true;
+      } catch { return true; }
+    }
+    return { isAllowedUrl, crawlDelayMs };
+  } catch {
+    return { isAllowedUrl: null, crawlDelayMs: 0 };
+  }
 }
 
 async function crawlInternalLinks(page, startUrl, maxPages, opts = {}) {
@@ -94,58 +135,37 @@ async function crawlInternalLinks(page, startUrl, maxPages, opts = {}) {
 
   while (queue.length && seen.size < maxPages) {
     const current = queue.shift();
-    if (isAllowedUrl && !isAllowedUrl(current)) {
-      continue;
-    }
-    if (slow && crawlDelayMs) {
-      await new Promise((r) => setTimeout(r, crawlDelayMs));
-    }
     try {
-      await page.goto(current, { waitUntil: "domcontentloaded", timeout: 60000 });
-      const hrefs = await page.$$eval("a[href]", (as) =>
-        as.map((a) => a.getAttribute("href")).filter(Boolean)
-      );
+      await page.goto(current, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: 60000 });
+      if (crawlDelayMs > 0) await sleep(crawlDelayMs);
+      const hrefs = await page.$$eval("a[href]", (as) => as.map((a) => a.getAttribute("href")).filter(Boolean));
       for (const href of hrefs) {
         let abs;
-        try {
-          abs = new URL(href, current).toString();
-        } catch {
-          continue;
-        }
+        try { abs = new URL(href, current).toString(); } catch { continue; }
         abs = normalizeUrl(abs);
         if (!isSameOrigin(abs, origin)) continue;
-
-        // Skip common non-content paths / file downloads
         const u = new URL(abs);
         const p = u.pathname.toLowerCase();
         if (p.endsWith(".pdf") || p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".zip")) continue;
-
+        if (isAllowedUrl && !isAllowedUrl(abs)) continue;
         if (!seen.has(abs) && seen.size < maxPages) {
           seen.add(abs);
           queue.push(abs);
         }
       }
-    } catch {
-      // ignore crawl failures; will show in final report as "page error" during scan if included
-    }
+    } catch {}
   }
-
   return Array.from(seen);
 }
 
 async function runAxe(page) {
   await page.addScriptTag({ path: axePath });
-  const result = await page.evaluate(async () => {
-    // eslint-disable-next-line no-undef
+  return await page.evaluate(async () => {
     return await axe.run(document, {
-      runOnly: {
-        type: "tag",
-        values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
-      },
+      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
       resultTypes: ["violations", "incomplete", "passes"],
     });
   });
-  return result;
 }
 
 function mapImpactToPriority(impact) {
@@ -161,21 +181,18 @@ function extractWcagRefs(tags = []) {
   return sc.length ? sc.join(" | ") : "";
 }
 
-function normalizeWhitespace(s) {
-  return String(s || "").replace(/\s+/g, " ").trim();
+function sheetFilterUrl(sheetId, gid, column, value) {
+  const safeId = sheetId || "SHEET_ID";
+  const safeGid = gid || "0";
+  return `https://docs.google.com/spreadsheets/d/${safeId}/edit#gid=${safeGid}&q=${column}%3A${encodeURIComponent(String(value))}`;
 }
 
 function looksLikeFilename(s) {
   const v = (s || "").toLowerCase();
   if (!v) return false;
   if (/(\.png|\.jpg|\.jpeg|\.gif|\.webp|\.svg)$/i.test(v)) return true;
-  // common camera / wp patterns
   if (/^(img|dsc|pxl|image)[-_\s]?\d+/.test(v)) return true;
-  // many separators and no spaces
-  const hasSep = /[_-]/.test(v);
-  const hasSpace = /\s/.test(v);
-  const hasLetters = /[a-z]/.test(v);
-  return hasLetters && hasSep && !hasSpace && v.length >= 8;
+  return /[_-]/.test(v) && !/\s/.test(v) && /[a-z]/.test(v) && v.length >= 8;
 }
 
 function suggestedAltFromSrc(src) {
@@ -183,233 +200,46 @@ function suggestedAltFromSrc(src) {
     const u = new URL(src);
     const base = (u.pathname.split("/").pop() || "").split("?")[0].split("#")[0];
     const noExt = base.replace(/\.[a-z0-9]+$/i, "");
-    const cleaned = noExt
-      .replace(/[-_]+/g, " ")
-      .replace(/\b\d{2,}\b/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!cleaned) return "";
-    // sentence-ish case
-    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-  } catch {
-    return "";
-  }
+    const cleaned = noExt.replace(/[-_]+/g, " ").replace(/\b\d{2,}\b/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : "";
+  } catch { return ""; }
 }
 
 function rateAltText(alt, src) {
   const a = normalizeWhitespace(alt);
   const issues = [];
   let score = 100;
-
   if (a === "") {
-    // Could be decorative; not necessarily wrong, but needs human confirmation.
     issues.push("alt_empty");
-    score = 80;
     const sug = suggestedAltFromSrc(src);
     return {
-      score,
+      score: 80,
       rating: "Needs review",
       issues: issues.join("|"),
-      suggested_alt: sug
-        ? `If informative, use something like: ${sug}`
-        : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='').",
+      suggested_alt: sug ? `If informative, use something like: ${sug}` : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='').",
     };
   }
-
-  if (!a) {
-    issues.push("alt_missing");
-    score = 0;
-  }
-
-  if (a && a.length < 4) {
-    issues.push("too_short");
-    score -= 30;
-  }
-
-  if (a && a.length > 125) {
-    issues.push("too_long");
-    score -= 20;
-  }
-
-  if (looksLikeFilename(a)) {
-    issues.push("looks_like_filename");
-    score -= 60;
-  }
-
-  if (/\b(copy|image|photo|picture)\b/i.test(a) && a.length <= 12) {
-    issues.push("too_generic");
-    score -= 25;
-  }
-
-  // clamp
+  if (!a) { issues.push("alt_missing"); score = 0; }
+  if (a && a.length < 4) { issues.push("too_short"); score -= 30; }
+  if (a && a.length > 125) { issues.push("too_long"); score -= 20; }
+  if (looksLikeFilename(a)) { issues.push("looks_like_filename"); score -= 60; }
+  if (/\b(copy|image|photo|picture)\b/i.test(a) && a.length <= 12) { issues.push("too_generic"); score -= 25; }
   score = Math.max(0, Math.min(100, score));
   const rating = score >= 85 ? "Good" : score >= 60 ? "OK" : score >= 35 ? "Poor" : "Bad";
-
-  let suggested = "";
-  if (issues.includes("alt_missing") || issues.includes("looks_like_filename") || issues.includes("too_generic")) {
-    const sug = suggestedAltFromSrc(src);
-    suggested = sug ? sug : "";
-  }
-
-  return {
-    score,
-    rating,
-    issues: issues.join("|"),
-    suggested_alt: suggested || "",
-  };
+  const suggested = (issues.includes("alt_missing") || issues.includes("looks_like_filename") || issues.includes("too_generic")) ? (suggestedAltFromSrc(src) || "") : "";
+  return { score, rating, issues: issues.join("|"), suggested_alt: suggested };
 }
 
-function getRunIdFromNow() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  const ss = pad(d.getSeconds());
-  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
-}
-
-function sheetFilterUrl(sheetId, gid, column, value) {
-  // We intentionally keep this simple. After CSV import, users can replace SHEET_ID with their real ID.
-  // Note: Google Sheets filter params differ depending on UI. This URL is a practical helper for jumping to a sheet
-  // and using Find/Filter quickly. Teams often use filter views or slicers after import.
-  const safeId = sheetId || "SHEET_ID";
-  const safeGid = gid || "0";
-  const v = encodeURIComponent(String(value));
-  // Use a query-ish fragment that is still useful even if Sheets doesn't auto-apply it as a filter in all cases.
-  // It acts as a documented "search link" that makes it trivial to locate values.
-  return `https://docs.google.com/spreadsheets/d/${safeId}/edit#gid=${safeGid}&q=${column}%3A${v}`;
-}
-
-
-function sleep(ms) {
-  return new Promise((res) => setTimeout(res, ms));
-}
-
-function classifyBotChallenge({ status, title, html }) {
-  const t = (title || "").toLowerCase();
-  const h = (html || "").toLowerCase();
-
-  // Cloudflare bot challenge pages often include these markers
-  if (
-    h.includes("/cdn-cgi/challenge-platform") ||
-    h.includes("__cf_chl") ||
-    h.includes("cf-challenge") ||
-    t.includes("just a moment") ||
-    t.includes("attention required")
-  ) {
-    return "cloudflare_challenge";
-  }
-
-  // Common WAF / bot protection vendors
-  if (h.includes("incapsula") || h.includes("_incapsula_resource")) return "imperva_incapsula";
-  if (h.includes("akamai") && h.includes("reference #")) return "akamai";
-  if (h.includes("datadome") && (h.includes("captcha") || h.includes("blocked"))) return "datadome";
-
-  // Generic access denied / rate limit hints
-  if (status === 401) return "http_401";
-  if (status === 403) return "http_403";
-  if (status === 429) return "http_429";
-  if (status === 503) return "http_503";
-
-  return "";
-}
-
-async function detectBotProtection(page, response) {
-  try {
-    const status = response ? response.status() : 0;
-    const title = await page.title().catch(() => "");
-    // page.content() can be heavy; still okay for challenge detection since these pages are small.
-    const html = await page.content().catch(() => "");
-    const type = classifyBotChallenge({ status, title, html });
-    return { detected: Boolean(type), type, status, title };
-  } catch {
-    return { detected: false, type: "", status: 0, title: "" };
-  }
-}
-
-async function fetchRobotsDisallow(origin) {
-  try {
-    const res = await fetch(new URL("/robots.txt", origin).toString(), {
-      redirect: "follow",
-      headers: { "user-agent": "Universal-A11y-Audit (Playwright + axe-core)" },
-    });
-    if (!res.ok) return [];
-    const txt = await res.text();
-
-    // Minimal robots parser: only respects User-agent: * then Disallow: rules.
-    let active = false;
-    const disallow = [];
-    for (const rawLine of txt.split(/\r?\n/)) {
-      const line = rawLine.replace(/#.*/, "").trim();
-      if (!line) continue;
-      const mUa = line.match(/^user-agent\s*:\s*(.+)$/i);
-      if (mUa) {
-        active = mUa[1].trim() === "*";
-        continue;
-      }
-      if (!active) continue;
-      const mDis = line.match(/^disallow\s*:\s*(.*)$/i);
-      if (mDis) {
-        const rule = (mDis[1] || "").trim();
-        // empty means allow all
-        if (rule) disallow.push(rule);
-      }
-    }
-    return disallow;
-  } catch {
-    return [];
-  }
-}
-
-function makeRobotsTester(disallowRules) {
-  const patterns = [];
-  for (const rule of disallowRules || []) {
-    const r = (rule || "").trim();
-    if (!r) continue;
-
-    // Convert robots wildcards to a regex on pathname.
-    // Examples: /private/  -> ^/private/
-    //           /*.pdf$   -> ^/.*\.pdf$
-    let re = "^" + r.replace(/[.*+?^${}()|[\]\\]/g, "\$&");
-    re = re.replace(/\\*/g, ".*");
-    patterns.push(new RegExp(re));
-  }
-
-  return function isAllowed(urlStr) {
-    try {
-      const u = new URL(urlStr);
-      const p = u.pathname;
-      for (const pat of patterns) {
-        if (pat.test(p)) return false;
-      }
-      return true;
-    } catch {
-      return true;
-    }
-  };
-}
-
-async function gotoWithRetry(page, url, opts) {
-  const {
-    slow = false,
-    retries = 1,
-    backoffMs = 3000,
-    timeoutMs = 90000,
-  } = opts || {};
-
+async function gotoWithRetry(page, url, opts = {}) {
+  const { slow = false, retries = 1, backoffMs = 3000, timeoutMs = 90000, cfAware = false } = opts;
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const waitUntil = slow ? "domcontentloaded" : "networkidle";
-      const response = await page.goto(url, { waitUntil, timeout: timeoutMs });
-      if (slow) await page.waitForTimeout(800);
-
-      const bot = await detectBotProtection(page, response);
+      const response = await page.goto(url, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: timeoutMs });
+      await page.waitForTimeout(slow ? 2000 : 800);
+      const html = await page.content();
+      const bot = cfAware ? detectBotChallengeHtml(html, response?.status?.() || 0) : { detected: false, type: "", status: 0 };
       if (bot.detected) {
-        // Treat bot challenges as a soft failure; optionally retry.
         lastErr = new Error(`bot_protection:${bot.type}`);
         if (attempt < retries) {
           const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
@@ -417,9 +247,8 @@ async function gotoWithRetry(page, url, opts) {
           await sleep(delay);
           continue;
         }
-        return { response, bot };
+        throw lastErr;
       }
-
       return { response, bot };
     } catch (e) {
       lastErr = e;
@@ -427,92 +256,64 @@ async function gotoWithRetry(page, url, opts) {
         const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
         console.warn(`   ⚠ Navigation failed (${String(e?.message || e)}). Backing off ${Math.ceil(delay/1000)}s then retrying...`);
         await sleep(delay);
-        continue;
       }
-      break;
     }
   }
-  throw lastErr || new Error("Navigation failed");
+  throw lastErr || new Error("navigation_failed");
 }
 
 async function main() {
   const args = parseArgs(process.argv);
-
   const baseOutDir = path.resolve(process.cwd(), args["out-dir"] || "reports");
-  const runId = args["run-id"] ? String(args["run-id"]) : getRunIdFromNow();
+  const runId = args["run-id"] ? String(args["run-id"]) : new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15);
   const outDir = path.join(baseOutDir, runId);
   ensureDir(outDir);
 
   const sheetId = args["sheet-id"] ? String(args["sheet-id"]) : "SHEET_ID";
   const sheetGid = args["sheet-gid"] ? String(args["sheet-gid"]) : "0";
-
   const startUrl = args.start ? normalizeUrl(args.start) : "https://example.com/";
+  const slowMode = Boolean(args["slow"]);
+  const cfAware = Boolean(args["cloudflare-aware"]);
+  const retries = args["retries"] ? Number(args["retries"]) : (slowMode ? 2 : 1);
+  const backoffMs = args["backoff-ms"] ? Number(args["backoff-ms"]) : (slowMode ? 8000 : 3000);
   const maxPages = args["max-pages"] ? Number(args["max-pages"]) : 50;
-
-  const slow = Boolean(args.slow);
   const respectRobots = Boolean(args["respect-robots"]);
-  const retries = args.retries ? Number(args.retries) : (slow ? 2 : 1);
-  const backoffMs = args["backoff-ms"] ? Number(args["backoff-ms"]) : (slow ? 8000 : 3000);
-  const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (slow ? 1500 : 0);
 
-  if (slow) {
-    console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
-  }
+  let robotsCfg = { isAllowedUrl: null, crawlDelayMs: 0 };
+  if (respectRobots) robotsCfg = await buildRobotsMatcher(startUrl);
+  const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
+
+  if (slowMode) console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
   if (respectRobots) {
     console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
+    if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s.`);
   }
-
-  let isAllowedUrl = null;
-  if (respectRobots) {
-    const origin = new URL(startUrl).origin;
-    const disallow = await fetchRobotsDisallow(origin);
-    isAllowedUrl = makeRobotsTester(disallow);
-    if (disallow.length) {
-      console.log(`ℹ robots.txt Disallow rules loaded: ${disallow.length}`);
-    } else {
-      console.log("ℹ robots.txt: no Disallow rules found (or robots.txt not accessible).");
-    }
-  }
+  if (cfAware) console.log("ℹ Cloudflare-aware challenge detection enabled (--cloudflare-aware).");
 
   let urls = [];
   if (args.crawl) {
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     const page = await context.newPage();
-    urls = await crawlInternalLinks(page, startUrl, maxPages, { isAllowedUrl, slow, crawlDelayMs });
+    urls = await crawlInternalLinks(page, startUrl, maxPages, { isAllowedUrl: robotsCfg.isAllowedUrl, slow: slowMode, crawlDelayMs });
     await browser.close();
   } else if (args["urls-file"]) {
-    const filePath = path.resolve(process.cwd(), args["urls-file"]);
-    urls = loadUrlsFromFile(filePath);
+    urls = loadUrlsFromFile(path.resolve(process.cwd(), args["urls-file"]));
+    if (robotsCfg.isAllowedUrl) urls = urls.filter((u) => robotsCfg.isAllowedUrl(u));
   } else {
     urls = [startUrl];
   }
 
-  if (isAllowedUrl) {
-    const before = urls.length;
-    urls = urls.filter((u) => {
-      try { return isAllowedUrl(u); } catch { return true; }
-    });
-    const removed = before - urls.length;
-    if (removed > 0) console.log(`ℹ robots.txt filtered out ${removed} URL(s).`);
-  }
-
-  // Scan
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    userAgent: "Universal-A11y-Audit (Playwright + axe-core)",
-  });
+  const context = await browser.newContext({ userAgent: "Universal-A11y-Audit (Playwright + axe-core)" });
   const page = await context.newPage();
 
   const siteResults = [];
   const csvRows = [];
   const imageAltRows = [];
-
   const startedAt = Date.now();
   let totalViolationNodes = 0;
   let pageErrors = 0;
-
-  // Summary maps for report metadata
   const byImpact = new Map();
   const byRule = new Map();
   const byPage = new Map();
@@ -520,121 +321,64 @@ async function main() {
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
     const idx = i + 1;
-
     const pageStart = Date.now();
     console.log(`[${idx}/${urls.length}] Scanning: ${url}`);
-
-    const pageResult = {
-      url,
-      ok: true,
-      error: null,
-      axe: null,
-      timestamp: new Date().toISOString(),
-    };
+    const pageResult = { url, ok: true, error: null, axe: null, timestamp: new Date().toISOString() };
 
     try {
-      const nav = await gotoWithRetry(page, url, { slow, retries, backoffMs, timeoutMs: 90000 });
-      if (nav.bot && nav.bot.detected) {
-        pageResult.ok = false;
-        pageResult.error = `bot_protection:${nav.bot.type}`;
+      const nav = await gotoWithRetry(page, url, { slow: slowMode, retries, backoffMs, timeoutMs: 90000, cfAware });
+      if (nav.bot && nav.bot.detected) throw new Error(`bot_protection:${nav.bot.type}`);
+      if (crawlDelayMs > 0) await sleep(crawlDelayMs);
 
-        csvRows.push({
-          scope: "Page",
-          page_url: url,
-          rule_id: "bot_protection",
-          impact: "serious",
-          priority: "P1-High",
-          wcag_refs: "",
-          help: "Bot protection / challenge page detected",
-          help_url: "",
-          description: `Bot protection detected during scan (${nav.bot.type}, status ${nav.bot.status}).`,
-          failure_summary: "Automated audit cannot run on challenge pages. Use --slow, reduce scan frequency, and consider allowlisting this scanner or scanning from a trusted network.",
-          selector_target: "",
-          html_snippet: "",
-          is_global_candidate: "no",
-          suggested_github_issue: "bot_protection",
-          rule_filter_url: sheetFilterUrl(sheetId, sheetGid, "rule_id", "bot_protection"),
-          impact_filter_url: sheetFilterUrl(sheetId, sheetGid, "impact", "serious"),
-          page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
-          recommendation: "Re-run later with --slow and fewer pages. If the site uses Cloudflare/WAF, consider allowlisting your scanning IP or using an authenticated scanner environment.",
+      try {
+        const imgs = await page.evaluate(() => {
+          const out = [];
+          const els = Array.from(document.querySelectorAll("img"));
+          for (const el of els) {
+            const src = el.currentSrc || el.getAttribute("src") || "";
+            const alt = el.getAttribute("alt");
+            const title = el.getAttribute("title") || "";
+            const id = el.id ? `#${el.id}` : "";
+            const cls = (el.className && typeof el.className === "string") ? "." + el.className.trim().split(/\s+/).slice(0, 3).join(".") : "";
+            const locator = (id || cls) ? `img${id}${cls}` : "img";
+            out.push({ src, alt: alt === null ? "" : alt, alt_present: alt !== null, title, locator });
+          }
+          return out;
         });
-
-        const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
-        const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
-        console.log(`   ↳ BOT CHALLENGE (${nav.bot.type}) in ${elapsed}s | elapsed: ${totalElapsed}m`);
-
-        siteResults.push(pageResult);
-        if (slow) await sleep(750 + Math.floor(Math.random() * 1250));
-        continue;
+        for (const im of imgs) {
+          if (!im.src) continue;
+          let abs = im.src;
+          try { abs = new URL(im.src, url).toString(); } catch {}
+          let rated = { score: 0, rating: "Needs review", issues: "alt_unrated", suggested_alt: "" };
+          try { rated = rateAltText(im.alt_present ? im.alt : "", abs); } catch (e) {}
+          imageAltRows.push({
+            page_url: url,
+            image_url: abs,
+            alt_present: im.alt_present ? "yes" : "no",
+            alt_text: normalizeWhitespace(im.alt_present ? im.alt : ""),
+            title_text: normalizeWhitespace(im.title || ""),
+            locator: im.locator || "img",
+            readability_score: rated.score,
+            readability_rating: rated.rating,
+            issues: rated.issues,
+            suggested_alt: rated.suggested_alt,
+          });
+        }
+      } catch (e) {
+        console.warn(`   ↳ Alt report skipped for ${url}: ${String(e?.message || e)}`);
       }
-
-      // Collect image alt text inventory for SEO + accessibility review (non-fatal)
-try {
-  const imgs = await page.evaluate(() => {
-    const out = [];
-    const els = Array.from(document.querySelectorAll('img'));
-    for (let i = 0; i < els.length; i++) {
-      const el = els[i];
-      const src = el.currentSrc || el.getAttribute('src') || '';
-      const alt = el.getAttribute('alt');
-      const title = el.getAttribute('title') || '';
-      // create a lightweight locator
-      const id = el.id ? `#${el.id}` : '';
-      const cls = (el.className && typeof el.className === 'string') ? '.' + el.className.trim().split(/\s+/).slice(0,3).join('.') : '';
-      const locator = (id || cls) ? `img${id}${cls}` : 'img';
-      out.push({ src, alt: alt === null ? '' : alt, alt_present: alt !== null, title, locator });
-    }
-    return out;
-  });
-
-  for (const im of imgs) {
-    if (!im.src) continue;
-    let abs = im.src;
-    try { abs = new URL(im.src, url).toString(); } catch {}
-    // rateAltText is a Node-side helper; keep this block defensive so it never breaks page scanning
-    let rated = { score: 0, rating: "Needs review", issues: "alt_unrated", suggested_alt: "" };
-    try {
-      rated = rateAltText(im.alt_present ? im.alt : '', abs);
-    } catch (e) {
-      rated = { score: 0, rating: "Needs review", issues: `alt_rating_error:${String(e?.message || e)}`, suggested_alt: "" };
-    }
-
-    imageAltRows.push({
-      page_url: url,
-      image_url: abs,
-      alt_present: im.alt_present ? "yes" : "no",
-      alt_text: normalizeWhitespace(im.alt_present ? im.alt : ''),
-      title_text: normalizeWhitespace(im.title || ''),
-      locator: im.locator || 'img',
-      readability_score: rated.score,
-      readability_rating: rated.rating,
-      issues: rated.issues,
-      suggested_alt: rated.suggested_alt,
-    });
-  }
-} catch (e) {
-  // Never fail the page scan due to alt reporting
-  console.warn(`   ↳ Alt report skipped for ${url}: ${String(e?.message || e)}`);
-}
-
-
 
       const axe = await runAxe(page);
       pageResult.axe = axe;
-
       let pageViolationNodes = 0;
-
       for (const v of axe.violations || []) {
         byRule.set(v.id, (byRule.get(v.id) || 0) + 1);
         byImpact.set(v.impact || "unknown", (byImpact.get(v.impact || "unknown") || 0) + 1);
-
         for (const node of v.nodes || []) {
           pageViolationNodes++;
           byPage.set(url, (byPage.get(url) || 0) + 1);
-
           const target = Array.isArray(node.target) ? node.target.join(" | ") : String(node.target || "");
           const wcagRefs = extractWcagRefs(v.tags || []);
-
           csvRows.push({
             scope: "Page",
             page_url: url,
@@ -647,111 +391,61 @@ try {
             description: v.description || "",
             failure_summary: node.failureSummary || "",
             selector_target: target,
-            html_snippet: (node.html || "").replace(/\s+/g, " ").slice(0, 500),
-
-            // Helper fields for ticketing / Sheets linking
-            is_global_candidate: ["color-contrast", "meta-viewport", "aria-prohibited-attr", "button-name", "link-name"].includes(v.id)
-              ? "yes"
-              : "no",
+            html_snippet: normalizeWhitespace((node.html || "").slice(0, 500)),
+            is_global_candidate: ["color-contrast", "meta-viewport", "aria-prohibited-attr", "button-name", "link-name"].includes(v.id) ? "yes" : "no",
             suggested_github_issue: v.id,
             rule_filter_url: sheetFilterUrl(sheetId, sheetGid, "rule_id", v.id),
             impact_filter_url: sheetFilterUrl(sheetId, sheetGid, "impact", v.impact || ""),
             page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
-
-            recommendation:
-              "Fix the issue per axe guidance; ensure WCAG 2.1 Level AA compliance for this component/site-wide pattern.",
+            recommendation: "Fix the issue per axe guidance; ensure WCAG 2.1 Level AA compliance for this component/site-wide pattern.",
           });
         }
       }
-
       totalViolationNodes += pageViolationNodes;
-
       const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
       const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
-      console.log(
-        `   ↳ Done in ${elapsed}s | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${totalElapsed}m`
-      );
+      console.log(`   ↳ Done in ${elapsed}s | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${totalElapsed}m`);
     } catch (err) {
       pageResult.ok = false;
       pageResult.error = String(err?.message || err);
       pageErrors++;
-
+      const isBot = pageResult.error.startsWith("bot_protection:");
       csvRows.push({
         scope: "Page",
         page_url: url,
-        rule_id: "page_error",
+        rule_id: isBot ? "bot_protection" : "page_error",
         impact: "serious",
         priority: "P1-High",
         wcag_refs: "",
-        help: "Page failed to load for scanning",
+        help: isBot ? "Bot protection / WAF challenge detected" : "Page failed to load for scanning",
         help_url: "",
-        description: "Playwright navigation error",
+        description: isBot ? "Bot protection / WAF challenge detected" : "Playwright navigation error",
         failure_summary: pageResult.error,
         selector_target: "",
         html_snippet: "",
         is_global_candidate: "no",
-        suggested_github_issue: "page_error",
-        rule_filter_url: sheetFilterUrl(sheetId, sheetGid, "rule_id", "page_error"),
+        suggested_github_issue: isBot ? "bot_protection" : "page_error",
+        rule_filter_url: sheetFilterUrl(sheetId, sheetGid, "rule_id", isBot ? "bot_protection" : "page_error"),
         impact_filter_url: sheetFilterUrl(sheetId, sheetGid, "impact", "serious"),
         page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
-        recommendation:
-          "Confirm the page is publicly accessible without auth/bot protection. Re-run scan; if persistent, ticket separately.",
+        recommendation: isBot ? "Back off, wait before retrying, and consider smaller batches with --slow --respect-robots --cloudflare-aware." : "Confirm the page is publicly accessible without auth/bot protection. Re-run scan; if persistent, ticket separately.",
       });
-
       const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
       const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
       console.log(`   ↳ ERROR in ${elapsed}s | elapsed: ${totalElapsed}m`);
     }
-
     siteResults.push(pageResult);
-    if (slow) await sleep(750 + Math.floor(Math.random() * 1250));
   }
 
   await browser.close();
 
-  const jsonOut = path.join(outDir, "a11y-report.json");
-  fs.writeFileSync(jsonOut, JSON.stringify({ runId, scanned: urls, results: siteResults }, null, 2));
-
-  const csvOut = path.join(outDir, "a11y-violations.csv");
-  const columns = [
-    "scope",
-    "page_url",
-    "rule_id",
-    "impact",
-    "priority",
-    "wcag_refs",
-    "help",
-    "help_url",
-    "description",
-    "failure_summary",
-    "selector_target",
-    "html_snippet",
-    "is_global_candidate",
-    "suggested_github_issue",
-    "rule_filter_url",
-    "impact_filter_url",
-    "page_filter_url",
-    "recommendation",
-  ];
-  fs.writeFileSync(csvOut, stringify(csvRows, { header: true, columns }));
-
-
-// Image alt text inventory report (SEO + accessibility)
-const altCsvOut = path.join(outDir, "a11y-image-alts.csv");
-const altColumns = [
-  "page_url",
-  "image_url",
-  "alt_present",
-  "alt_text",
-  "title_text",
-  "locator",
-  "readability_score",
-  "readability_rating",
-  "issues",
-  "suggested_alt",
-];
-fs.writeFileSync(altCsvOut, stringify(imageAltRows, { header: true, columns: altColumns }));
-
+  fs.writeFileSync(path.join(outDir, "a11y-report.json"), JSON.stringify({ runId, scanned: urls, results: siteResults }, null, 2));
+  fs.writeFileSync(path.join(outDir, "a11y-violations.csv"), stringify(csvRows, { header: true, columns: [
+    "scope","page_url","rule_id","impact","priority","wcag_refs","help","help_url","description","failure_summary","selector_target","html_snippet","is_global_candidate","suggested_github_issue","rule_filter_url","impact_filter_url","page_filter_url","recommendation"
+  ]}));
+  fs.writeFileSync(path.join(outDir, "a11y-image-alts.csv"), stringify(imageAltRows, { header: true, columns: [
+    "page_url","image_url","alt_present","alt_text","title_text","locator","readability_score","readability_rating","issues","suggested_alt"
+  ]}));
 
   const meta = {
     runId,
@@ -759,30 +453,17 @@ fs.writeFileSync(altCsvOut, stringify(imageAltRows, { header: true, columns: alt
     finishedAt: new Date().toISOString(),
     pagesScanned: urls.length,
     pageErrors,
-    violationNodes: csvRows.filter((r) => r.rule_id !== "page_error").length,
+    violationNodes: csvRows.filter((r) => r.rule_id !== "page_error" && r.rule_id !== "bot_protection").length,
     byImpact: Object.fromEntries(byImpact),
     byRule: Object.fromEntries(byRule),
-    topPages: Array.from(byPage.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 20)
-      .map(([url, count]) => ({ url, count })),
+    topPages: Array.from(byPage.entries()).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([url, count]) => ({ url, count })),
   };
-  const metaOut = path.join(outDir, "a11y-run-metadata.json");
-  fs.writeFileSync(metaOut, JSON.stringify(meta, null, 2));
-
-  // Also write a pointer for convenience
-  const latestPtr = path.join(baseOutDir, "latest");
-  try {
-    // best effort: create/overwrite "latest" file with runId
-    fs.writeFileSync(latestPtr, runId, "utf8");
-  } catch {}
+  fs.writeFileSync(path.join(outDir, "a11y-run-metadata.json"), JSON.stringify(meta, null, 2));
+  try { fs.writeFileSync(path.join(baseOutDir, "latest"), runId, "utf8"); } catch {}
 
   console.log(`Scanned ${urls.length} page(s).`);
   console.log(`CSV rows (violating nodes): ${meta.violationNodes}`);
   if (pageErrors) console.log(`Pages with scan errors: ${pageErrors}`);
-  console.log(`Wrote: ${jsonOut}`);
-  console.log(`Wrote: ${csvOut}`);
-  console.log(`Wrote: ${metaOut}`);
   console.log(`Run folder: ${outDir}`);
 }
 

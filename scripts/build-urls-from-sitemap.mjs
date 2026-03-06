@@ -1,298 +1,288 @@
 #!/usr/bin/env node
 /**
- * build-urls-from-sitemap.mjs
+ * Build a URL list from a site's sitemap(s).
  *
- * Universal URL list builder for accessibility audits.
- * Works with:
- *  - WordPress + Yoast (sitemap_index.xml) and WP core sitemaps
- *  - Static sites with sitemap.xml
- *
- * Defaults:
- *  - Prefer "page" + "post" style sitemaps when a sitemap index exists
- *  - Exclude common archive/taxonomy pages (tag/category/author/pagination)
- *  - Output a newline-delimited URLs file suitable for the audit runner
- *
- * Examples:
- *  node scripts/build-urls-from-sitemap.mjs --site https://www.example.com --out scripts/urls.txt
- *  node scripts/build-urls-from-sitemap.mjs --site https://example.com --include-sitemaps "page,post" --exclude-path "/tag/,/category/" --out scripts/urls.txt
- *  node scripts/build-urls-from-sitemap.mjs --sitemap-url https://example.com/sitemap.xml --out scripts/urls.txt
+ * Supports:
+ * - robots.txt sitemap hints
+ * - sitemap_index.xml
+ * - sitemap.xml
+ * - Drupal paged sitemap indexes (e.g. sitemap.xml?page=1)
  *
  * Notes:
- *  - Node 18+ recommended (uses global fetch)
+ * - This script is for discovery, not bypassing bot protection.
+ * - For protected sites, use the browser-saved XML fallback helper:
+ *   scripts/convert-sitemap-xml-to-urls.mjs
  */
 
 import fs from "node:fs";
-import { XMLParser } from "fast-xml-parser";
+import path from "node:path";
 
 function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (!a.startsWith("--")) continue;
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (!next || next.startsWith("--")) {
-      args[key] = true;
-    } else {
-      args[key] = next;
-      i++;
+    if (a.startsWith("--")) {
+      const key = a.replace(/^--/, "");
+      const next = argv[i + 1];
+      if (!next || next.startsWith("--")) {
+        args[key] = true;
+      } else {
+        args[key] = next;
+        i++;
+      }
     }
   }
   return args;
 }
 
 function normalizeSite(site) {
-  if (!site) return null;
   const u = new URL(site);
-  // Force https if someone passed http accidentally? We'll keep as-is.
-  // Ensure no trailing slash for consistent concatenation.
-  u.pathname = "/";
   u.hash = "";
-  u.search = "";
   return u.origin;
 }
 
-function normalizeUrl(u) {
+function normalizeUrl(u, base) {
   try {
-    const url = new URL(u);
+    const url = base ? new URL(u, base) : new URL(u);
+    if (url.pathname !== "/" && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.slice(0, -1);
+    }
     url.hash = "";
-    // remove trailing slash except root
-    if (url.pathname !== "/" && url.pathname.endsWith("/")) url.pathname = url.pathname.slice(0, -1);
     return url.toString();
   } catch {
-    return u;
+    return String(u || "").trim();
   }
 }
 
-async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: { "user-agent": "Universal-A11y-Audit/1.0 (+Playwright+axe-core)" },
-  });
-  if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
-  return await res.text();
-}
-
-function toArray(maybe) {
-  if (!maybe) return [];
-  return Array.isArray(maybe) ? maybe : [maybe];
-}
-
-function splitCsv(v) {
-  if (!v) return [];
-  return String(v)
+function splitCsvish(v) {
+  return String(v || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 }
 
-function compileMatchers(items) {
-  // items can be substrings OR /regex/ style or plain regex string
-  return (items || []).map((raw) => {
-    const s = String(raw).trim();
-    if (!s) return null;
-    if (s.startsWith("/") && s.endsWith("/") && s.length > 2) {
-      return { type: "regex", value: new RegExp(s.slice(1, -1), "i"), raw: s };
-    }
-    return { type: "substr", value: s, raw: s };
-  }).filter(Boolean);
+function xmlDecode(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
-function matchesAny(url, matchers) {
-  for (const m of matchers) {
-    if (m.type === "substr" && url.includes(m.value)) return true;
-    if (m.type === "regex" && m.value.test(url)) return true;
-  }
-  return false;
-}
-
-async function discoverSitemapsFromRobots(siteOrigin) {
-  const robotsUrl = `${siteOrigin}/robots.txt`;
+async function fetchText(url, timeoutMs = 30000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const txt = await fetchText(robotsUrl);
-    const lines = txt.split(/\r?\n/g);
-    const sitemaps = lines
-      .map((l) => l.trim())
-      .filter((l) => /^sitemap:/i.test(l))
-      .map((l) => l.split(/:\s*/i).slice(1).join(":").trim())
-      .filter(Boolean);
-    return sitemaps.map(normalizeUrl);
-  } catch {
-    return [];
+    const res = await fetch(url, {
+      redirect: "follow",
+      signal: ac.signal,
+      headers: {
+        "user-agent": "Universal-A11y-Audit URL Builder",
+        "accept": "text/plain, application/xml, text/xml, */*",
+      },
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, url, text };
+  } catch (e) {
+    return { ok: false, status: 0, url, text: "", error: String(e?.message || e) };
+  } finally {
+    clearTimeout(t);
   }
 }
 
-function parseSitemapXml(xml) {
-  const parser = new XMLParser({ ignoreAttributes: false });
-  return parser.parse(xml);
+function detectCloudflareOrBot(text, status) {
+  const s = String(text || "").toLowerCase();
+  if ([403, 429, 503].includes(Number(status))) return true;
+  return (
+    s.includes("just a moment") ||
+    s.includes("cf-browser-verification") ||
+    s.includes("attention required") ||
+    s.includes("cloudflare") ||
+    s.includes("captcha") ||
+    s.includes("verify you are human")
+  );
 }
 
-function extractLocsFromUrlset(parsed) {
-  const urlset = parsed?.urlset?.url;
-  const urls = toArray(urlset).map((u) => u?.loc).filter(Boolean);
-  return urls.map(normalizeUrl);
+function extractLocs(xml) {
+  const locs = [];
+  const re = /<loc\b[^>]*>([\s\S]*?)<\/loc>/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const v = xmlDecode(m[1]).trim();
+    if (v) locs.push(v);
+  }
+  return locs;
 }
 
-function extractSitemapsFromIndex(parsed) {
-  const s = parsed?.sitemapindex?.sitemap;
-  const urls = toArray(s).map((x) => x?.loc).filter(Boolean);
-  return urls.map(normalizeUrl);
+function detectRootType(xml) {
+  const s = String(xml || "").toLowerCase();
+  if (s.includes("<sitemapindex")) return "sitemapindex";
+  if (s.includes("<urlset")) return "urlset";
+  return "unknown";
 }
 
-function defaultSitemapIncludeMatchers() {
-  // Focus on human-facing content by default
-  // Yoast:
-  //  - page-sitemap.xml
-  //  - post-sitemap.xml
-  // WP core:
-  //  - wp-sitemap-posts-post-*.xml
-  //  - wp-sitemap-posts-page-*.xml
-  return compileMatchers([
-    "page-sitemap",
-    "post-sitemap",
-    "wp-sitemap-posts-page",
-    "wp-sitemap-posts-post",
-  ]);
+function shouldKeepUrl(url, includePaths, excludePaths) {
+  const u = String(url || "");
+  if (!u) return false;
+  if (includePaths.length && !includePaths.some((p) => u.includes(p))) return false;
+  if (excludePaths.some((p) => u.includes(p))) return false;
+  return true;
 }
 
-function defaultSitemapExcludeMatchers() {
-  // Exclude taxonomy/author/media archives by default
-  return compileMatchers([
-    "category-sitemap",
-    "post_tag-sitemap",
-    "tag-sitemap",
-    "author-sitemap",
-    "archive-sitemap",
-    "wp-sitemap-taxonomies",
-    "wp-sitemap-users",
-    "wp-sitemap-posts-attachment",
-  ]);
+function selectContentSitemaps(urls, includeSitemaps) {
+  if (includeSitemaps.length) {
+    return urls.filter((u) => includeSitemaps.some((p) => u.toLowerCase().includes(p.toLowerCase())));
+  }
+  return urls.filter((u) => {
+    const s = u.toLowerCase();
+    const include =
+      s.includes("page-sitemap") ||
+      s.includes("post-sitemap") ||
+      s.includes("/sitemap.xml?page=");
+    const exclude =
+      s.includes("tag") ||
+      s.includes("category") ||
+      s.includes("author") ||
+      s.includes("taxonomy") ||
+      s.includes("attachment") ||
+      s.includes("media") ||
+      s.includes("image-sitemap") ||
+      s.includes("video-sitemap");
+    return include && !exclude;
+  });
 }
 
-function defaultUrlExcludeMatchers() {
-  return compileMatchers([
-    "/tag/",
-    "/category/",
-    "/author/",
-    // pagination
-    "/page/",
-    // feeds & endpoints
-    "/feed",
-    "/wp-json/",
-    "?",
-  ]);
+async function getRobotsHints(siteOrigin) {
+  const robotsUrl = `${siteOrigin}/robots.txt`;
+  const details = await fetchText(robotsUrl);
+  if (!details.ok) return { sitemapHints: [], robotsText: "", crawlDelay: null, details };
+
+  const lines = details.text.split(/\r?\n/g);
+  const hints = [];
+  let crawlDelay = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const m = /^sitemap:\s*(.+)$/i.exec(trimmed);
+    if (m) hints.push(normalizeUrl(m[1], siteOrigin));
+    const cd = /^crawl-delay:\s*(\d+)$/i.exec(trimmed);
+    if (cd && crawlDelay === null) crawlDelay = Number(cd[1]);
+  }
+  return { sitemapHints: hints, robotsText: details.text, crawlDelay, details };
 }
 
 async function main() {
   const args = parseArgs(process.argv);
+  const site = args.site ? normalizeSite(args.site) : null;
+  const out = args.out || args["urls-file"] || "scripts/urls.txt";
+  const includePaths = splitCsvish(args["include-path"]);
+  const excludePaths = splitCsvish(
+    args["exclude-path"] || "/tag/,/category/,/author/,/page/,/wp-json/,?,/feed"
+  );
+  const includeSitemaps = splitCsvish(args["include-sitemaps"]);
 
-  const outPath = args.out || "scripts/urls.txt";
-  const maxUrls = args["max-urls"] ? Number(args["max-urls"]) : null;
-
-  const siteOrigin = normalizeSite(args.site);
-  const sitemapUrlArg = args["sitemap-url"] ? normalizeUrl(args["sitemap-url"]) : null;
-
-  if (!siteOrigin && !sitemapUrlArg) {
-    console.error("ERROR: Provide --site https://example.com OR --sitemap-url https://example.com/sitemap.xml");
+  if (!site && !args["sitemap-url"]) {
+    console.error("ERROR: Provide --site https://www.example.com or --sitemap-url https://www.example.com/sitemap.xml");
     process.exit(1);
   }
 
-  const includeSitemaps = compileMatchers(splitCsv(args["include-sitemaps"]));
-  const excludeSitemaps = compileMatchers(splitCsv(args["exclude-sitemaps"]));
-  const includePaths = compileMatchers(splitCsv(args["include-path"]));
-  const excludePaths = compileMatchers(splitCsv(args["exclude-path"]));
+  let sitemapCandidates = [];
+  let crawlDelay = null;
+  let robotsBlocked = false;
 
-  // Defaults
-  const sitemapInclude = includeSitemaps.length ? includeSitemaps : defaultSitemapIncludeMatchers();
-  const sitemapExclude = excludeSitemaps.length ? excludeSitemaps : defaultSitemapExcludeMatchers();
-  const urlExclude = excludePaths.length ? excludePaths : defaultUrlExcludeMatchers();
-
-  // Determine sitemap candidates
-  let candidates = [];
-  if (sitemapUrlArg) {
-    candidates = [sitemapUrlArg];
+  if (args["sitemap-url"]) {
+    sitemapCandidates = [args["sitemap-url"]];
   } else {
-    const fromRobots = await discoverSitemapsFromRobots(siteOrigin);
-    candidates = fromRobots.length
-      ? fromRobots
-      : [
-          `${siteOrigin}/sitemap_index.xml`,
-          `${siteOrigin}/sitemap.xml`,
-        ].map(normalizeUrl);
+    const robots = await getRobotsHints(site);
+    crawlDelay = robots.crawlDelay;
+    if (robots.details && detectCloudflareOrBot(robots.details.text, robots.details.status)) {
+      robotsBlocked = true;
+    }
+    sitemapCandidates = [
+      ...robots.sitemapHints,
+      `${site}/sitemap_index.xml`,
+      `${site}/sitemap.xml`,
+    ];
   }
 
-  // Fetch first working sitemap
-  let sitemapXml = null;
-  let sitemapUrlUsed = null;
-  for (const c of candidates) {
-    try {
-      sitemapXml = await fetchText(c);
-      sitemapUrlUsed = c;
+  sitemapCandidates = Array.from(new Set(sitemapCandidates.map((u) => normalizeUrl(u, site || undefined))));
+
+  let selectedTopLevel = null;
+  let topLevelXml = null;
+  let topLevelType = "unknown";
+  let botProtected = false;
+
+  for (const candidate of sitemapCandidates) {
+    const details = await fetchText(candidate);
+    if (detectCloudflareOrBot(details.text, details.status)) {
+      botProtected = true;
+      continue;
+    }
+    if (!details.ok || !details.text) continue;
+    const type = detectRootType(details.text);
+    if (type !== "unknown") {
+      selectedTopLevel = candidate;
+      topLevelXml = details.text;
+      topLevelType = type;
       break;
-    } catch {
-      // continue
     }
   }
 
-  if (!sitemapXml || !sitemapUrlUsed) {
+  if (!selectedTopLevel || !topLevelXml) {
     console.error("ERROR: Could not fetch sitemap (robots.txt, sitemap_index.xml, sitemap.xml).");
-    console.error("Tip: Use --sitemap-url explicitly, or use the crawl mode in the audit runner.");
+    if (botProtected || robotsBlocked) {
+      console.error("NOTE: The site appears to use bot protection / WAF / Cloudflare-style challenges.");
+    }
+    console.error("Tip: Use --sitemap-url explicitly, or use the browser-saved XML fallback helper.");
+    console.error("Tip: For protected sites, save the sitemap XML in your browser and run:");
+    console.error("     node scripts/convert-sitemap-xml-to-urls.mjs --input ./saved-sitemap.xml --out ./urls.txt");
     process.exit(1);
   }
 
-  console.log(`Using sitemap: ${sitemapUrlUsed}`);
+  console.log(`Using sitemap: ${selectedTopLevel}`);
+  if (crawlDelay !== null) {
+    console.log(`robots.txt Crawl-delay detected: ${crawlDelay}s`);
+  }
 
-  const parsed = parseSitemapXml(sitemapXml);
   let urls = [];
-
-  // If sitemap index, pick child sitemaps then extract URL locs from each
-  const childSitemaps = extractSitemapsFromIndex(parsed);
-  if (childSitemaps.length) {
-    // Filter sitemap files
-    const selected = childSitemaps
-      .filter((u) => (sitemapInclude.length ? matchesAny(u, sitemapInclude) : true))
-      .filter((u) => !matchesAny(u, sitemapExclude));
-
-    console.log(`Found ${childSitemaps.length} sitemaps in index; selected ${selected.length}`);
-
+  if (topLevelType === "urlset") {
+    urls = extractLocs(topLevelXml);
+    // If this looks like a Drupal top-level index rendered as urlset of nested sitemap pages,
+    // the user can still choose to use them directly or convert browser-saved XML.
+  } else if (topLevelType === "sitemapindex") {
+    const sitemapUrls = extractLocs(topLevelXml);
+    const selected = selectContentSitemaps(sitemapUrls, includeSitemaps);
+    console.log(`Found ${sitemapUrls.length} sitemaps in index; selected ${selected.length}`);
     for (const sm of selected) {
-      try {
-        console.log(`Processing ${sm}`);
-        const xml = await fetchText(sm);
-        const p = parseSitemapXml(xml);
-        urls.push(...extractLocsFromUrlset(p));
-      } catch (e) {
-        console.warn(`WARN: Failed to process sitemap ${sm}: ${String(e?.message || e)}`);
+      console.log(`Processing ${sm}`);
+      const details = await fetchText(sm);
+      if (detectCloudflareOrBot(details.text, details.status)) {
+        console.warn(`Skipping protected sitemap: ${sm}`);
+        continue;
+      }
+      if (!details.ok || !details.text) continue;
+      const type = detectRootType(details.text);
+      if (type === "urlset") {
+        urls.push(...extractLocs(details.text));
+      } else if (type === "sitemapindex") {
+        // nested index, collect locs but do not recurse deeply
+        urls.push(...extractLocs(details.text));
       }
     }
-  } else {
-    // Standard sitemap.xml (urlset)
-    urls = extractLocsFromUrlset(parsed);
-    console.log(`Found ${urls.length} URLs in sitemap`);
   }
 
-  // Apply URL filters
-  urls = urls.map(normalizeUrl);
+  urls = urls
+    .map((u) => normalizeUrl(u, site || undefined))
+    .filter((u) => shouldKeepUrl(u, includePaths, excludePaths));
 
-  // Include-path can be used to narrow to specific site areas
-  if (includePaths.length) {
-    urls = urls.filter((u) => matchesAny(u, includePaths));
-  }
-  // Apply default excludes (and any user excludes)
-  urls = urls.filter((u) => !matchesAny(u, urlExclude));
+  urls = Array.from(new Set(urls));
 
-  // Deduplicate + stable sort
-  const set = new Set(urls);
-  let finalUrls = Array.from(set).sort();
-
-  if (maxUrls && finalUrls.length > maxUrls) {
-    finalUrls = finalUrls.slice(0, maxUrls);
-  }
-
-  fs.writeFileSync(outPath, finalUrls.join("\n") + "\n");
-  console.log(`✔ Wrote ${finalUrls.length} URLs to ${outPath}`);
+  fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  fs.writeFileSync(path.resolve(out), urls.join("\n") + (urls.length ? "\n" : ""), "utf8");
+  console.log(`✔ Wrote ${urls.length} URLs to ${path.resolve(out)}`);
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

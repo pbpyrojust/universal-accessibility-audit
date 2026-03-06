@@ -9,7 +9,9 @@
     "audit:crawl": "node scripts/a11y-audit.mjs --crawl --start https://www.example.com --max-pages 50 --out-dir reports",
     "report": "node scripts/generate-google-doc-report.mjs --run-dir reports/latest",
     "prepare": "husky",
-    "version:bump": "node scripts/bump-version.mjs"
+    "version:bump": "node scripts/bump-version.mjs",
+    "sitemap:xml-to-urls": "node scripts/convert-sitemap-xml-to-urls.mjs",
+    "audit:slow": "node scripts/run-audit.mjs --slow --respect-robots --cloudflare-aware"
   },
   "dependencies": {
     "axe-core": "^4.11.1",
@@ -17,7 +19,7 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.57.0"
   },
-  "version": "0.1.5",
+  "version": "0.1.12",
   "description": "Universal accessibility audit runner (Playwright + axe-core) with sitemap discovery and ticket-ready outputs.",
   "author": "Justin Adams <justin@justwhat.net> (https://justwhat.net)",
   "homepage": "https://justwhat.net",
