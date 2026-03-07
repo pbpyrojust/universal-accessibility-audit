@@ -104,6 +104,7 @@ function main() {
     if (args["include-path"]) buildArgs.push("--include-path", args["include-path"]);
     if (args["exclude-path"]) buildArgs.push("--exclude-path", args["exclude-path"]);
     if (args["include-sitemaps"]) buildArgs.push("--include-sitemaps", args["include-sitemaps"]);
+    if (args["include-all-sitemaps"]) buildArgs.push("--include-all-sitemaps");
 
     const build = runNodeScript(path.resolve("scripts/build-urls-from-sitemap.mjs"), buildArgs);
     if (build.status !== 0) {

@@ -130,7 +130,11 @@ function shouldKeepUrl(url, includePaths, excludePaths) {
   return true;
 }
 
-function selectContentSitemaps(urls, includeSitemaps) {
+function selectContentSitemaps(urls, includeSitemaps, includeAllSitemaps = false) {
+  if (includeAllSitemaps) {
+    return urls;
+  }
+
   if (includeSitemaps.length) {
     return urls.filter((u) => includeSitemaps.some((p) => u.toLowerCase().includes(p.toLowerCase())));
   }
@@ -216,6 +220,7 @@ async function main() {
     args["exclude-path"] || "/tag/,/category/,/author/,/page/,/wp-json/,?,/feed"
   );
   const includeSitemaps = splitCsvish(args["include-sitemaps"]);
+  const includeAllSitemaps = Boolean(args["include-all-sitemaps"]);
 
   if (!site && !args["sitemap-url"]) {
     console.error("ERROR: Provide --site https://www.example.com or --sitemap-url https://www.example.com/sitemap.xml");
@@ -287,7 +292,7 @@ async function main() {
     // the user can still choose to use them directly or convert browser-saved XML.
   } else if (topLevelType === "sitemapindex") {
     const sitemapUrls = extractLocs(topLevelXml);
-    const selected = selectContentSitemaps(sitemapUrls, includeSitemaps);
+    const selected = selectContentSitemaps(sitemapUrls, includeSitemaps, includeAllSitemaps);
     console.log(`Found ${sitemapUrls.length} sitemaps in index; selected ${selected.length}`);
     for (const sm of selected) {
       console.log(`Processing ${sm}`);

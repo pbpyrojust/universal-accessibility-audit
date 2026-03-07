@@ -1,7 +1,7 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
 **Created by:** Justin Adams — JustWhat.net — justin@justwhat.net  
-**Version:** 0.1.14
+**Version:** 0.1.15
 
 A universal, command-line accessibility audit tool that:
 
@@ -169,6 +169,17 @@ This includes common generators such as:
 - Yoast post sitemaps
 - WordPress core `wp-sitemap-posts-*` sitemaps (pages, posts, and public post types)
 
+This means the tool may report something like:
+
+```text
+Found 15 sitemaps in index; selected 8
+```
+
+That is expected behavior for many WordPress sites.
+
+The first number is the **total number of sitemap files** in the index.  
+The second number is the subset that the tool considers **user-facing content sitemaps** worth auditing by default.
+
 Common non-content sitemap types are excluded:
 
 - tag
@@ -177,6 +188,17 @@ Common non-content sitemap types are excluded:
 - taxonomy
 - media / image / attachment
 - archive-like sitemap sources
+
+
+If you want to include **everything** in the sitemap index — including taxonomy, archive, author, or other non-content sitemap sources — use:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --include-all-sitemaps
+```
+
+Use that only when you intentionally want a broader audit scope, since it may introduce duplicate-like archive pages, low-value URLs, and extra ticket noise.
 
 ### Drupal support
 This project also supports Drupal sitemap patterns, including paged sitemap URLs such as:
@@ -578,6 +600,14 @@ node scripts/run-audit.mjs \
   --crawl-delay-ms 10000 \
   --backoff-ms 15000 \
   --retries 3
+```
+
+Include all sitemap index entries (including non-content sitemap sources):
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --include-all-sitemaps
 ```
 
 Build URLs only:
