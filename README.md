@@ -1,45 +1,94 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
-**Created by:** Justin Adams — JustWhat.net — justin@justwhat.net
-**Version:** 0.1.12
+**Created by:** Justin Adams — JustWhat.net — justin@justwhat.net  
+**Version:** 0.1.13
 
 A universal, command-line accessibility audit tool that:
-- Builds a scan URL list from a site's sitemap (Yoast/WP core/standard sitemap.xml)
+
+- Builds a scan URL list from a site's sitemap (Yoast / WordPress core / standard `sitemap.xml`)
+- Supports a **manual browser-saved sitemap XML fallback** for protected sites
 - Runs automated WCAG 2.1 A/AA checks via **axe-core** inside a real browser using **Playwright**
-- Produces **ticket-ready** artifacts:
+- Produces **ticket-ready artifacts**:
   - CSV of violating elements (one row per node)
   - JSON raw results
-  - Summary report formatted for Google Docs (Markdown)
-  - **GitHub ticket backlog CSV** (one row per ticket)
+  - summary report formatted for Google Docs (Markdown)
+  - **GitHub ticket backlog CSV** (one row per recommended issue)
+  - image alt text inventory report for SEO + accessibility review
+
+This project is designed to support a real-world workflow:
+
+**audit → ticket → fix → re-audit → verify**
+
+---
+
+## What this tool is for
+
+This toolkit is intended for teams that need a repeatable, evidence-backed accessibility workflow across:
+
+- WordPress sites
+- Yoast sitemap setups
+- Drupal sites
+- static sites
+- sitemap-driven marketing sites
+- enterprise/public-sector/NGO sites with partial bot protection or WAF controls
+
+It is especially useful when you need:
+
+- **global vs page-level issue grouping**
+- **ticket-ready outputs** for GitHub Projects or other work trackers
+- **Google Sheets evidence links**
+- **Google Docs–ready summaries**
+- a way to work around **blocked sitemap discovery** using browser-saved XML
 
 ---
 
 ## Requirements
-- **Node.js 20+ (LTS recommended)** (tested with Node 20/22/24)
-- npm (or pnpm/yarn)
+
+- **Node.js 20+** recommended
+- npm (or pnpm / yarn)
 - Playwright browser install (Chromium)
 
-Install deps:
+Install dependencies:
+
 ```bash
 npm install
 npx playwright install --with-deps chromium
-# If Playwright reports a missing browser later, run this again:
-# npx playwright install
+```
+
+If Playwright later reports that the browser executable is missing, run:
+
+```bash
+npx playwright install
 ```
 
 ---
 
-## Quick start (one command)
+## Quick start
 
-### WordPress / Yoast (or any site with sitemap)
+### Standard site audit
+For a normal site with a readable sitemap:
+
 ```bash
 node scripts/run-audit.mjs --site https://www.example.com
 ```
 
-This runs 3 steps:
-1) Build URLs from sitemap -> `reports/<run-id>/urls.txt`
-2) Scan URLs with Playwright + axe-core (with progress logging)
-3) Generate docs-ready summary report
+This performs:
+
+1. sitemap discovery / URL list build
+2. Playwright + axe-core page scan
+3. docs-ready summary generation
+4. GitHub ticket backlog generation
+
+### Protected-site conservative audit
+For sites that may be rate limited or behind Cloudflare / WAF protections:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --slow \
+  --respect-robots \
+  --cloudflare-aware
+```
 
 ---
 
@@ -47,53 +96,129 @@ This runs 3 steps:
 
 Each run writes to a **timestamped folder** so reports are never overwritten:
 
-```
+```text
 reports/
   20260122-141010/
+    urls.txt
     a11y-violations.csv
     a11y-report.json
     a11y-run-metadata.json
     a11y-summary-google-doc.md
-  latest   (contains the latest runId)
+    a11y-github-tickets.csv
+    a11y-image-alts.csv
+  latest
 ```
+
+### Output files explained
+
+- **`urls.txt`**  
+  The URL list used for the run
+
+- **`a11y-violations.csv`**  
+  One row per violating node
+
+- **`a11y-report.json`**  
+  Raw per-page results
+
+- **`a11y-run-metadata.json`**  
+  Summary counts, top pages, rule totals, and run timing
+
+- **`a11y-summary-google-doc.md`**  
+  Docs-ready report content you can paste into Google Docs
+
+- **`a11y-github-tickets.csv`**  
+  One row per recommended GitHub issue
+
+- **`a11y-image-alts.csv`**  
+  Image alt text inventory with readability scoring and suggested improvements
 
 ---
 
 ## Progress logging
 
-The audit prints progress as it scans:
+The audit prints progress while scanning:
 
-```
+```text
 [12/221] Scanning: https://example.com/some-page
-   ↳ Done in 3.4s | violation nodes: 18 | total: 214 | elapsed: 0.8m
+   ↳ Done in 3.4s | violation nodes: 18 | total: 214
+```
+
+For protected sites, you may also see warnings like:
+
+```text
+⚠ Bot protection detected (cloudflare, status 403). Backing off 15s then retrying...
 ```
 
 ---
 
-## Sitemap behavior (universal)
+## Sitemap discovery behavior
 
-### What it tries by default
-When you provide `--site https://example.com`, the URL builder will try:
-1) `robots.txt` sitemap hints (`Sitemap: ...`)
-2) `https://example.com/sitemap_index.xml`
-3) `https://example.com/sitemap.xml`
+### Default discovery order
+When you provide `--site https://example.com`, the URL builder attempts:
+
+1. `robots.txt` sitemap hints
+2. `/sitemap_index.xml`
+3. `/sitemap.xml`
 
 ### WordPress + Yoast defaults
-If a sitemap index exists, we **select only content sitemaps** by default:
-- includes: page + post sitemaps (Yoast + WP core patterns)
-- excludes: taxonomy/tag/category/author/archive/media/attachment sitemaps
+If a sitemap index exists, only **content sitemaps** are included by default:
+
+- page sitemaps
+- post sitemaps
+
+And common non-content sitemap types are excluded:
+
+- tag
+- category
+- author
+- taxonomy
+- media / image / attachment
+- archive-like sitemap sources
+
+### Drupal support
+This project also supports Drupal sitemap patterns, including paged sitemap URLs such as:
+
+```text
+https://www.example.com/sitemap.xml?page=1
+https://www.example.com/sitemap.xml?page=2
+```
 
 ### Static sites
-If the site has a standard `sitemap.xml` (urlset), we scan it directly.
+If the site exposes a standard `sitemap.xml` with a `urlset`, it can be scanned directly.
 
-### Drupal XML sitemap notes
-Some Drupal sites expose a top-level sitemap like `https://www.example.com/sitemap.xml` that points to paged child sitemaps such as:
-- `https://www.example.com/sitemap.xml?page=1`
-- `https://www.example.com/sitemap.xml?page=2`
+---
 
-This tool now recognizes that pattern when the top-level sitemap is accessible and will process the paged child sitemap URLs automatically.
+## Controlling what gets included or excluded
 
-If you pass a query-string sitemap URL manually in `zsh`, quote it so the shell does not treat `?` as a glob pattern:
+### Default exclusions
+URLs containing the following are excluded by default:
+
+- `/tag/`
+- `/category/`
+- `/author/`
+- `/page/`
+- `/wp-json/`
+- query strings (`?`)
+- `/feed`
+
+### Override include / exclude rules
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --exclude-path "/tag/,/category/,/author/" \
+  --include-path "/services/,/insights/"
+```
+
+### Choose which sitemap types to include
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --include-sitemaps "page,post"
+```
+
+### Use an explicit sitemap URL
 
 ```bash
 node scripts/run-audit.mjs \
@@ -101,167 +226,88 @@ node scripts/run-audit.mjs \
   --sitemap-url 'https://www.example.com/sitemap.xml?page=1'
 ```
 
+> If the sitemap URL contains `?`, quote it in your shell.
 
----
-
-## Controlling what gets included/excluded
-
-### Exclude common WP archive pages (default)
-By default, URLs containing these segments are excluded:
-- `/tag/`, `/category/`, `/author/`, `/page/`, `/wp-json/`, query strings `?`, and `/feed`
-
-### Override / customize
-You can override by passing your own matchers:
+### Fallback crawl mode
 
 ```bash
 node scripts/run-audit.mjs \
-  --site https://example.com \
-  --exclude-path "/tag/,/category/,/author/,/page/" \
-  --include-path "/insights/,/services/"
+  --site https://www.example.com \
+  --fallback-crawl \
+  --max-pages 75
 ```
-
-### Choose which sitemaps to include (when index exists)
-```bash
-node scripts/run-audit.mjs \
-  --site https://example.com \
-  --include-sitemaps "page,post"
-```
-
-### Explicit sitemap URL
-```bash
-node scripts/run-audit.mjs --sitemap-url https://example.com/sitemap.xml --site https://example.com
-```
-
-### Fallback to crawl
-If sitemap discovery fails, you can opt into crawl mode:
-```bash
-node scripts/run-audit.mjs --site https://example.com --fallback-crawl --max-pages 75
-```
-
 
 ---
 
-## Bot protection, rate limits, and responsible scanning
+## Google Sheets evidence links
 
-Many sites use **Cloudflare** or other web application firewalls (WAF/bot protection). Repeated automated browser scans can trigger:
-- Challenge pages ("Just a moment…", CAPTCHA, interstitial checks)
-- Temporary blocks (403/429), throttling, or inconsistent results
+This tool can generate **ready-to-click Google Sheets evidence links** inside the CSV outputs.
 
-This tool will attempt to **detect common bot challenge pages** and will tag them explicitly in the output as:
-- `rule_id = bot_protection` (instead of producing misleading WCAG violations from a challenge page)
+### Recommended workflow
 
-If a site exposes a sitemap in a normal browser but blocks scripted access to `robots.txt` or `sitemap.xml`, the URL builder may fail before the page scan begins. That usually indicates Cloudflare/WAF/rate limiting on non-interactive requests. In those cases, this tool will not bypass the protection.
-
-### Conservative scanning options
-Use these flags when scanning production sites, Cloudflare-protected properties, or whenever you want to be cautious:
-
-- `--slow` — adds a delay between pages and enables retry/backoff defaults.
-- `--respect-robots` — attempts to read `robots.txt` and *skips* disallowed URLs (best-effort).
+1. Create a **blank Google Sheet**
+2. Copy the full Sheet URL
+3. Pass it to the audit with `--sheet-url`
 
 Example:
 
 ```bash
 node scripts/run-audit.mjs \
   --site https://www.example.com \
-  --slow \
-  --respect-robots
+  --sheet-url "https://docs.google.com/spreadsheets/d/1abcDEF1234567890/edit?gid=0#gid=0"
 ```
 
-### Retry / backoff tuning
-You can also override retry behavior:
+The runner extracts:
 
-- `--retries 2` — number of additional navigation retries (beyond the first attempt)
-- `--backoff-ms 8000` — base backoff delay in milliseconds (exponential)
-- `--crawl-delay-ms 1500` — delay between discovered pages during crawl mode
+- the **Sheet ID**
+- the **gid** (worksheet/tab ID)
 
-> If you see bot protection warnings in the terminal or `bot_protection` rows in the CSV, back off and try again later (or scan from a whitelisted IP / staging environment).
+Then all evidence links in the output files are populated automatically.
 
-### Recommended fallback workflow for protected sites
-1) Open the sitemap in a normal browser and export/copy the URLs you need.
-2) Save them into a plain text file (one URL per line).
-3) Run the audit with `--urls-file` to skip sitemap discovery entirely.
+### If you do not pass `--sheet-url`
+If `--sheet-url` is omitted, outputs use a placeholder `SHEET_ID`.
 
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./my-urls.txt \
-  --slow \
-  --respect-robots
-```
+You can later replace it manually inside Google Sheets if needed.
+
+### Evidence link columns
+CSV outputs may include helper columns such as:
+
+- `rule_filter_url`
+- `impact_filter_url`
+- `page_filter_url`
+- `rule_evidence_url`
+- `page_evidence_url`
+
+These are intended to make ticket creation easier.
+
+> Limitation: CSV import cannot create Google Sheets saved filter views automatically.  
+> These links are best-effort evidence jump links, not true prebuilt filter views.
 
 ---
 
-## Google Sheets evidence links (recommended workflow)
+## GitHub ticket workflow
 
-This toolkit can generate ready-to-click **Google Sheets evidence links** inside the CSV outputs (for quick “jump to evidence” when creating tickets).
-
-### Recommended process (no manual find/replace)
-
-1) Create a **blank Google Sheet** (any name is fine).
-2) Copy the full Sheet URL from your browser. It looks like:
-
-   `https://docs.google.com/spreadsheets/d/1abcDEF_exampleSheetId/edit?gid=0#gid=0`
-
-3) Run the audit and pass the Sheet URL:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --sheet-url "https://docs.google.com/spreadsheets/d/1abcDEF_exampleSheetId/edit?gid=0#gid=0"
-```
-
-The runner will automatically extract:
-- the **Sheet ID** (the long string between `/d/` and `/edit`)
-- the **gid** (the tab id, typically `0` for a new sheet)
-
-All evidence links will be fully populated in:
-- `a11y-violations.csv`
-- `a11y-github-tickets.csv`
-- `a11y-summary-google-doc.md`
-
-### Import step
-
-After the run:
-1) Import `a11y-violations.csv` into your Google Sheet (File → Import).
-2) Use evidence links from `a11y-github-tickets.csv` inside your GitHub Issues.
-
-### If you do NOT pass --sheet-url
-
-If `--sheet-url` is omitted, evidence URLs will contain a placeholder `SHEET_ID`.
-You can either:
-- re-run with `--sheet-url`, **or**
-- replace `SHEET_ID` with your spreadsheet ID using Find & Replace after import.
-
-> Limitation: CSV import cannot auto-create Google Sheets *filter views*. The evidence links are designed to be low-effort jump links for browsing evidence by rule / impact / page.
-
----
-
-
-
-## Image alt text inventory report (SEO + accessibility)
-
+### Ticket backlog CSV
 Each run also generates:
 
-- `a11y-image-alts.csv` — an inventory of images found during the scan, including:
-  - the page the image appears on
-  - the resolved image URL
-  - the current alt text (or whether it is missing/empty)
-  - a simple readability score + rating
-  - suggested improvements (especially useful when alt text is a filename)
+- **`a11y-github-tickets.csv`**
 
-Notes:
-- Empty alt text (`alt=""`) can be valid for decorative images, but should be reviewed.
-- Automated suggestions cannot know intent; use this report to prioritize improvements quickly.
+This file is grouped into recommended issues:
 
-## Ticketing workflow (GitHub Projects)
+- **Global tickets** for issues that affect many pages or shared components
+- **Page tickets** for isolated, page-specific problems
 
-Recommended workflow:
-1) Create **global/component tickets** first (contrast, viewport, ARIA).
-2) Re-run audit after fixes.
-3) Close resolved issues and only create net-new page-level tickets.
+### Recommended workflow
+1. Run the audit
+2. Import `a11y-violations.csv` into Google Sheets
+3. Review `a11y-github-tickets.csv`
+4. Create global/component tickets first
+5. Re-run after fixes
+6. Only create net-new page tickets after the global fixes land
 
-### Suggested issue format (copy/paste)
-```
+### Suggested issue format
+
+```text
 Title: [A11Y][WCAG] <Short issue name>
 Labels: accessibility, wcag, priority:P1, frontend, global
 
@@ -274,200 +320,105 @@ QA steps: <how to verify + re-run scan>
 
 ---
 
-## What this tool does NOT cover (manual testing required)
+## Image alt text report
 
-Automated scanning is not sufficient for full WCAG AA compliance. You must manually test:
-- Keyboard-only navigation (focus order, traps, visible focus everywhere)
-- Screen reader UX (NVDA/JAWS/VoiceOver)
-- Meaningfulness of alt text and link text
-- Form error messaging and instructions
-- Media captions/transcripts
-- Usability at 200% zoom / reflow behavior
+Each run also generates:
 
----
+- **`a11y-image-alts.csv`**
 
-## Commands reference
+This report includes:
 
-Build URLs only:
-```bash
-node scripts/build-urls-from-sitemap.mjs --site https://example.com --out reports/<run-id>/urls.txt
-```
+- `page_url`
+- `image_url`
+- `alt_present`
+- `alt_text`
+- `title_text`
+- `locator`
+- `readability_score`
+- `readability_rating`
+- `issues`
+- `suggested_alt`
 
-Audit a prepared URLs list directly:
-```bash
-node scripts/a11y-audit.mjs --urls-file reports/<run-id>/urls.txt --out-dir reports
-```
+### Why this matters
+Many websites, especially CMS-based sites, use weak alt text patterns such as:
 
-Run the full workflow with a prepared URL list (skip sitemap discovery):
-```bash
-node scripts/run-audit.mjs --site https://example.com --urls-file ./my-urls.txt --slow --respect-robots
-```
+- file names
+- generic placeholders
+- empty or missing alt text
+- editor-generated defaults
 
-Crawl mode:
-```bash
-node scripts/a11y-audit.mjs --crawl --start https://example.com --max-pages 50 --out-dir reports
-```
-
-Generate docs-ready report for a run:
-```bash
-node scripts/generate-google-doc-report.mjs --run-dir reports/<runId> --site https://example.com
-```
+This report helps identify both:
+- accessibility issues
+- weak SEO / content quality patterns
 
 ---
-
-
-
-### Safer mode for protected sites
-
-For sites behind Cloudflare or similar WAF/bot protection, use:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware
-```
-
-What these flags do:
-
-- `--slow` adds pacing, conservative waits, and longer backoff between requests
-- `--respect-robots` follows `robots.txt` guidance where applicable
-- `--cloudflare-aware` detects common Cloudflare / challenge pages and retries with backoff instead of reporting misleading results
-
-### Manual fallback for protected sitemap access
-
-If a sitemap is visible in your normal browser but blocked to scripts or SEO crawlers, save the XML from your browser and convert it into `urls.txt`:
-
-```bash
-node scripts/convert-sitemap-xml-to-urls.mjs \
-  --input ./saved-sitemap.xml \
-  --out ./reports/manual/urls.txt
-
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./reports/manual/urls.txt \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware
-```
-
-### Important
-This project does **not** attempt to bypass bot protection. Challenge detection, retry, and backoff are intended to make scans safer and more accurate, not to defeat site protections.
-
-## Manual fallback for protected sites: browser-saved sitemap XML
-
-Some sites use Cloudflare, WAFs, or other bot protection that allows a human user to open sitemap files in a normal browser, but blocks scripted access from Node, Playwright, SEO crawlers, or API clients.
-
-For those cases, this project includes a manual fallback helper:
-
-```bash
-node scripts/convert-sitemap-xml-to-urls.mjs \
-  --input ./saved-sitemap.xml \
-  --out ./reports/<run-id>/urls.txt
-```
-
-### Recommended workflow for protected sites
-1. Open the sitemap in your normal browser.
-2. Save the XML file locally.
-3. Run the helper to convert that saved XML into a `urls.txt` file.
-4. Run the audit against that file.
-
-Example:
-
-```bash
-node scripts/convert-sitemap-xml-to-urls.mjs \
-  --input ./saved-sitemap.xml \
-  --out ./reports/manual/urls.txt
-
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./reports/manual/urls.txt \
-  --slow \
-  --respect-robots
-```
-
-### Drupal XML sitemap note
-Some Drupal sites publish a top-level sitemap index like:
-
-- `https://www.example.com/sitemap.xml`
-- nested sitemap pages such as:
-  - `https://www.example.com/sitemap.xml?page=1`
-  - `https://www.example.com/sitemap.xml?page=2`
-
-If the top-level file is protected, you can:
-1. open each sitemap page in a normal browser,
-2. save the XML locally,
-3. run `convert-sitemap-xml-to-urls.mjs` on each saved file,
-4. combine or append the resulting `urls.txt` files.
-
-### Optional filters
-You can still filter what gets written to `urls.txt`:
-
-```bash
-node scripts/convert-sitemap-xml-to-urls.mjs \
-  --input ./saved-sitemap.xml \
-  --out ./reports/manual/urls.txt \
-  --exclude-path "/tag/,/category/,/author/" \
-  --include-path "/news/,/about/"
-```
-
-### Important note
-If the saved XML file is a **sitemap index** (`<sitemapindex>`), this helper will extract the nested sitemap URLs it finds, but it will **not fetch them automatically**. That is intentional, so the workflow remains safe and compatible with protected sites.
-
-
 
 ## Protected sites, WAFs, Cloudflare, and conservative scanning
 
-Some sites allow a human visitor to browse pages or open sitemap files, but block scripted requests, SEO crawlers, or repeated automated browser traffic. This commonly happens on sites protected by:
+Some sites allow a human visitor to browse pages or open sitemap files, but block scripted requests, SEO crawlers, or repeated automated browser traffic.
+
+This commonly happens on sites protected by:
 
 - Cloudflare
 - Akamai
 - Imperva
 - custom WAF / rate limiting
-- bot protection or CAPTCHA / “verify you are human” interstitials
+- CAPTCHA / “verify you are human” interstitials
+- bot protection applied to sitemap downloads or page requests
 
-This project **does not bypass** those protections. Instead, it provides safer handling so you can:
+This project **does not bypass** those protections.
+
+Instead, it provides safer handling so you can:
 
 - back off and retry conservatively
 - respect `robots.txt`
 - use browser-saved sitemap XML as a fallback
 - audit in small batches
+- explicitly tag bot-protection events instead of pretending they are page-level accessibility issues
 
 ### Important
-These features are **optional** and are intended for hard-to-scan or partially protected sites.
+These features are **optional**.
 
 They do **not** change the normal/default workflow for regular sites.
 
-For normal sites, you can still run:
+For a normal site, continue using:
 
 ```bash
 node scripts/run-audit.mjs --site https://www.example.com
 ```
 
-Only when you add flags like `--slow`, `--respect-robots`, `--cloudflare-aware`, `--backoff-ms`, or `--crawl-delay-ms` do the conservative behaviors apply.
+Only when you add flags such as:
 
-### Conservative / protected-site flags
+- `--slow`
+- `--respect-robots`
+- `--cloudflare-aware`
+- `--backoff-ms`
+- `--crawl-delay-ms`
+- `--retries`
 
-- `--slow`  
+do the conservative behaviors apply.
+
+### Protected-site flags
+
+- **`--slow`**  
   Enables slower navigation timing, longer waits, and safer retries.
 
-- `--respect-robots`  
+- **`--respect-robots`**  
   Reads `robots.txt`, applies Disallow filtering when possible, and uses `Crawl-delay` if present.
 
-- `--cloudflare-aware`  
-  Detects common Cloudflare / bot-challenge pages and tags them as bot protection events instead of pretending they are normal page failures.
+- **`--cloudflare-aware`**  
+  Detects common Cloudflare / challenge pages and tags them explicitly as bot protection events.
 
-- `--backoff-ms <milliseconds>`  
-  Sets the base retry backoff delay. Higher values are safer for protected sites.
+- **`--backoff-ms <milliseconds>`**  
+  Sets the base retry backoff delay.
 
-- `--crawl-delay-ms <milliseconds>`  
-  Forces an additional wait between page requests. Use this when you want to slow the audit down even more than the built-in defaults.
+- **`--crawl-delay-ms <milliseconds>`**  
+  Forces an additional wait between page requests.
 
-- `--retries <count>`  
-  Sets how many retries are attempted for navigation failures or detected challenge pages.
+- **`--retries <count>`**  
+  Sets how many retries are attempted for navigation failures or challenge pages.
 
-### Recommended command for protected sites
+### Recommended protected-site command
 
 ```bash
 node scripts/run-audit.mjs \
@@ -479,8 +430,6 @@ node scripts/run-audit.mjs \
 
 ### Slower / more conservative example
 
-If the site still appears sensitive, increase both the crawl delay and the retry backoff:
-
 ```bash
 node scripts/run-audit.mjs \
   --site https://www.example.com \
@@ -493,37 +442,42 @@ node scripts/run-audit.mjs \
   --retries 3
 ```
 
-That example waits longer between page requests and backs off more aggressively before retrying.
+That example:
+- waits longer between page requests
+- backs off more aggressively
+- retries conservatively
 
-### Browser requirement for Playwright
-If you see an error like:
+### Important note on intent
+These flags exist to make scans **safer and more honest**, not to defeat site protections.
+
+---
+
+## When sitemap discovery is blocked
+
+Some sites allow humans to view the sitemap in a browser, but block automated tools from downloading it.
+
+Typical output looks like:
 
 ```text
-Executable doesn't exist ...
-Please run: npx playwright install
+ERROR: Could not fetch sitemap (robots.txt, sitemap_index.xml, sitemap.xml).
+NOTE: The site appears to use bot protection / WAF / Cloudflare-style challenges.
 ```
 
-install the browser binaries and try again:
+If that happens, use the fallback workflow below.
 
-```bash
-npx playwright install
+### Step 1 — open the sitemap in your browser
+
+Examples:
+
+```text
+https://www.example.com/sitemap.xml
+https://www.example.com/sitemap_index.xml
+https://www.example.com/sitemap.xml?page=1
 ```
 
-or, for a full install:
+Save the XML file locally.
 
-```bash
-npx playwright install --with-deps chromium
-```
-
-### Recommended workflow for a protected Drupal / Cloudflare site
-
-1. Try the normal conservative command first.
-2. If sitemap access is blocked, save the sitemap XML in a normal browser.
-3. Convert the saved XML into `urls.txt`.
-4. Run the audit against a **small subset first**.
-5. Increase batch size gradually only if the site stays stable.
-
-#### Example: convert browser-saved sitemap XML to `urls.txt`
+### Step 2 — convert saved XML to `urls.txt`
 
 ```bash
 node scripts/convert-sitemap-xml-to-urls.mjs \
@@ -531,11 +485,26 @@ node scripts/convert-sitemap-xml-to-urls.mjs \
   --out ./reports/manual-urls.txt
 ```
 
-#### Example: test a small batch first
+### Step 3 — test a small batch first
 
 ```bash
 head -n 10 ./reports/manual-urls.txt > ./reports/manual-urls-small.txt
+```
 
+### Step 4 — run the audit from that file
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --urls-file ./reports/manual-urls-small.txt \
+  --slow \
+  --respect-robots \
+  --cloudflare-aware
+```
+
+### Step 5 — go even slower if needed
+
+```bash
 node scripts/run-audit.mjs \
   --site https://www.example.com \
   --urls-file ./reports/manual-urls-small.txt \
@@ -543,24 +512,49 @@ node scripts/run-audit.mjs \
   --respect-robots \
   --cloudflare-aware \
   --crawl-delay-ms 10000 \
-  --backoff-ms 15000 \
-  --retries 3
+  --backoff-ms 20000 \
+  --retries 2
 ```
 
-### What to expect
-For protected sites, the goal is not to “force” the scan through. The goal is to:
+### Real-world example: protected Drupal sitemap
+Some Drupal sites publish:
 
-- reduce request pressure
-- avoid misleading results
-- identify bot protection explicitly
-- find a workable batch size
-- keep the workflow honest and reproducible
+```text
+https://www.example.com/sitemap.xml?page=1
+https://www.example.com/sitemap.xml?page=2
+```
 
-If a site still blocks the audit even in slow mode, use the browser-saved sitemap XML fallback and smaller page batches.
+If those URLs are visible in a browser but blocked to scripts:
 
+1. save each XML file in the browser
+2. convert each to `urls.txt`
+3. combine and dedupe them
+4. run the audit from the combined file
+5. start with a small subset
 
+### Why this scenario matters
+This is common on:
+
+- Drupal sites with security modules
+- public-sector / NGO websites
+- enterprise CMS properties
+- sites behind Cloudflare WAF
+- environments where SEO crawlers also fail
+
+The project is designed to handle this scenario honestly and predictably.
+
+---
+
+## Commands reference
+
+Standard audit:
+
+```bash
+node scripts/run-audit.mjs --site https://www.example.com
+```
 
 Protected-site slow mode:
+
 ```bash
 node scripts/run-audit.mjs \
   --site https://www.example.com \
@@ -570,6 +564,7 @@ node scripts/run-audit.mjs \
 ```
 
 Protected-site slower mode with explicit delay tuning:
+
 ```bash
 node scripts/run-audit.mjs \
   --site https://www.example.com \
@@ -582,68 +577,88 @@ node scripts/run-audit.mjs \
   --retries 3
 ```
 
-## License / disclaimer
-This tool provides **automated** WCAG checks and is intended to help teams prioritize remediation. It does not constitute a legal compliance guarantee.
-
-
-
----
-
-## Ticket backlog CSV (one row per GitHub Issue)
-
-Each run also generates:
-
-- `a11y-github-tickets.csv` — **one row per recommended GitHub Issue**, grouped by:
-  - **Global**: `(rule_id, priority)` when a rule impacts many pages (or is a known global rule)
-  - **Page**: `(page_url, rule_id, priority)` for isolated page-level issues
-
-This is designed for dropping into a GitHub Project "Issues" column quickly.
-
-### How to use it
-1) Import `a11y-violations.csv` into Google Sheets (optional but recommended for evidence browsing)
-2) Import `a11y-github-tickets.csv` into Google Sheets **or** open it locally
-3) Create GitHub Issues using each row:
-   - `github_title`
-   - `github_labels`
-   - Use `rule_evidence_url` / `page_evidence_url` links as supporting evidence
-
-### Google Sheets ID replacement
-Evidence links in both CSVs are generated using either:
-- `--sheet-url "<YOUR_GOOGLE_SHEET_URL>"` (recommended), **or**
-- `--sheet-id <YOUR_SHEET_ID>` and optional `--sheet-gid <gid>`, **or**
-- a placeholder `SHEET_ID` (default)
-
-If you used the placeholder:
-- After importing into Google Sheets, run a **Find & Replace** in the sheet:
-  - Find: `SHEET_ID`
-  - Replace with: your real spreadsheet ID (from the URL)
-
-### Skip ticket CSV generation
-If you only want the raw scan outputs:
+Build URLs only:
 
 ```bash
-node scripts/run-audit.mjs --site https://example.com --no-tickets
+node scripts/build-urls-from-sitemap.mjs \
+  --site https://www.example.com \
+  --out ./reports/<run-id>/urls.txt
+```
+
+Audit a prepared URLs list:
+
+```bash
+node scripts/a11y-audit.mjs \
+  --urls-file ./reports/<run-id>/urls.txt \
+  --out-dir ./reports
+```
+
+Convert a browser-saved sitemap XML into `urls.txt`:
+
+```bash
+node scripts/convert-sitemap-xml-to-urls.mjs \
+  --input ./saved-sitemap.xml \
+  --out ./reports/<run-id>/urls.txt
+```
+
+Generate docs-ready report for a run:
+
+```bash
+node scripts/generate-google-doc-report.mjs \
+  --run-dir ./reports/<run-id> \
+  --site https://www.example.com
+```
+
+Skip ticket CSV generation:
+
+```bash
+node scripts/run-audit.mjs --site https://www.example.com --no-tickets
 ```
 
 ---
 
-## Limitations & required manual testing (summary)
+## What this tool does not cover
 
-Automated tests do **not** guarantee WCAG 2.1 AA compliance. You still must manually verify:
-- Keyboard-only navigation (focus order, traps, visible focus)
-- Screen reader behavior (VoiceOver/NVDA)
-- Form labels, errors, and input assistance
-- Meaningfulness of alt text and link text
-- Captions/transcripts for media
-- Zoom/reflow at 200% (mobile and desktop)
+Automated scanning is not sufficient for full WCAG 2.1 AA compliance.
 
+You must still manually test:
+
+- keyboard-only navigation
+- focus order and visible focus
+- screen reader behavior (VoiceOver / NVDA / JAWS)
+- form labels, errors, and input assistance
+- link text meaning
+- alt text meaning
+- media captions / transcripts
+- zoom/reflow at 200%
+- overall usability and comprehension
+
+---
+
+## Known limitations
+
+- Some sites block sitemap access even when it is visible to a human in a browser.
+- Some sites allow sitemap access but block Playwright page navigation.
+- Repeated scans may trigger rate limiting or WAF rules.
+- Google Sheets links are helper links, not true saved filter views.
+- Internationalized URLs may appear percent-encoded in some outputs unless decoded by your viewer.
+- Extremely protected sites may require manual XML export plus very small batch sizes.
+
+### Practical advice
+If you encounter bot protection:
+
+- wait before retrying
+- reduce batch size
+- increase `--crawl-delay-ms`
+- increase `--backoff-ms`
+- lower retry count if the site is aggressive
+- use browser-saved sitemap XML fallback
+
+---
 
 ## Automatic versioning
 
-This project automatically bumps the **patch** version in `package.json` on every commit via a Git hook (Husky).
-
-- After `npm install`, Husky installs a `pre-commit` hook.
-- On each commit, the hook runs `node scripts/bump-version.mjs`, stages `package.json`, and proceeds with the commit.
+This project automatically bumps the **patch** version in `package.json` on every commit via Husky.
 
 If you need to bump manually:
 
@@ -651,19 +666,10 @@ If you need to bump manually:
 npm run version:bump
 ```
 
-> Note: Git hooks run locally. In CI, your version will already be baked into the commit.
+---
 
+## License / disclaimer
 
-### When sitemap fetch fails but the sitemap works in your browser
-That usually means the site is treating scripted requests differently from an interactive browser session. Common causes include:
-- WAF / bot protection
-- rate limiting
-- geo/IP filtering
-- challenge pages returned instead of XML
+This tool provides **automated** WCAG checks and is intended to help teams prioritize remediation. It does **not** guarantee legal compliance and does **not** bypass bot protection, WAF rules, or CAPTCHA systems.
 
-This toolkit does **not** bypass those protections. Recommended options:
-- wait and try again later
-- use `--slow --respect-robots` for conservative scanning
-- pass `--sitemap-url` explicitly (quoted if it contains `?`)
-- save the browser-visible sitemap URLs into a text file and run with `--urls-file`
-- prefer a staging or whitelisted environment when available
+This project is licensed under the **MIT License**.
