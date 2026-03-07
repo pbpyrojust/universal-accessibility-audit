@@ -134,23 +134,59 @@ function selectContentSitemaps(urls, includeSitemaps) {
   if (includeSitemaps.length) {
     return urls.filter((u) => includeSitemaps.some((p) => u.toLowerCase().includes(p.toLowerCase())));
   }
-  return urls.filter((u) => {
+
+  const selected = urls.filter((u) => {
     const s = u.toLowerCase();
+
+    // Include user-facing content sitemap patterns across common generators:
+    // - Yoast: page-sitemap.xml, post-sitemap.xml
+    // - Drupal XML Sitemap: sitemap.xml?page=1
+    // - WordPress core: wp-sitemap-posts-post-1.xml, wp-sitemap-posts-page-1.xml,
+    //   and other public post-type sitemaps under wp-sitemap-posts-*
     const include =
       s.includes("page-sitemap") ||
       s.includes("post-sitemap") ||
-      s.includes("/sitemap.xml?page=");
+      s.includes("/sitemap.xml?page=") ||
+      s.includes("wp-sitemap-posts-");
+
+    // Exclude common non-content / archive / media / user sitemap patterns
     const exclude =
       s.includes("tag") ||
       s.includes("category") ||
       s.includes("author") ||
       s.includes("taxonomy") ||
+      s.includes("wp-sitemap-taxonomies-") ||
+      s.includes("wp-sitemap-users") ||
       s.includes("attachment") ||
       s.includes("media") ||
       s.includes("image-sitemap") ||
       s.includes("video-sitemap");
+
     return include && !exclude;
   });
+
+  // If we still selected nothing, fall back to all non-excluded sitemap URLs.
+  // This helps with uncommon-but-valid sitemap naming conventions while still
+  // avoiding obviously non-content sitemap sources.
+  if (selected.length === 0) {
+    return urls.filter((u) => {
+      const s = u.toLowerCase();
+      const exclude =
+        s.includes("tag") ||
+        s.includes("category") ||
+        s.includes("author") ||
+        s.includes("taxonomy") ||
+        s.includes("wp-sitemap-taxonomies-") ||
+        s.includes("wp-sitemap-users") ||
+        s.includes("attachment") ||
+        s.includes("media") ||
+        s.includes("image-sitemap") ||
+        s.includes("video-sitemap");
+      return !exclude;
+    });
+  }
+
+  return selected;
 }
 
 async function getRobotsHints(siteOrigin) {

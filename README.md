@@ -1,7 +1,7 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
 **Created by:** Justin Adams — JustWhat.net — justin@justwhat.net  
-**Version:** 0.1.13
+**Version:** 0.1.14
 
 A universal, command-line accessibility audit tool that:
 
@@ -161,12 +161,15 @@ When you provide `--site https://example.com`, the URL builder attempts:
 3. `/sitemap.xml`
 
 ### WordPress + Yoast defaults
-If a sitemap index exists, only **content sitemaps** are included by default:
+If a sitemap index exists, only **content sitemaps** are included by default.
 
-- page sitemaps
-- post sitemaps
+This includes common generators such as:
 
-And common non-content sitemap types are excluded:
+- Yoast page sitemaps
+- Yoast post sitemaps
+- WordPress core `wp-sitemap-posts-*` sitemaps (pages, posts, and public post types)
+
+Common non-content sitemap types are excluded:
 
 - tag
 - category
