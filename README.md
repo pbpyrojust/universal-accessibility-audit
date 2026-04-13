@@ -1,7 +1,7 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
 **Created by:** Justin Adams — JustWhat.net — justin@justwhat.net  
-**Version:** 0.1.17
+**Version:** 0.1.18
 
 A universal, command-line accessibility audit tool that:
 
@@ -12,7 +12,7 @@ A universal, command-line accessibility audit tool that:
   - CSV of violating elements (one row per node)
   - JSON raw results
   - summary report formatted for Google Docs (Markdown)
-  - **GitHub ticket backlog CSV** (one row per recommended issue)
+  - **ticket/backlog CSV** (one row per recommended issue)
   - image alt text inventory report for SEO + accessibility review
 
 This project is designed to support a real-world workflow:
@@ -35,7 +35,7 @@ This toolkit is intended for teams that need a repeatable, evidence-backed acces
 It is especially useful when you need:
 
 - **global vs page-level issue grouping**
-- **ticket-ready outputs** for GitHub Projects or other work trackers
+- **ticket-ready outputs** for project-management systems or other work trackers
 - **Google Sheets evidence links**
 - **Google Docs–ready summaries**
 - a way to work around **blocked sitemap discovery** using browser-saved XML
@@ -94,11 +94,11 @@ node scripts/run-audit.mjs \
 
 ## Output
 
-Each run writes to a **timestamped folder** so reports are never overwritten:
+Each run writes to a **site-name + timestamp folder** so reports are never overwritten and are easier to identify later:
 
 ```text
 reports/
-  20260122-141010/
+  example.com-20260122-141010/
     urls.txt
     a11y-violations.csv
     a11y-report.json
@@ -443,6 +443,9 @@ do the conservative behaviors apply.
 - **`--retries <count>`**  
   Sets how many retries are attempted for navigation failures or challenge pages.
 
+- **`--batch-size <count>`**  
+  Trims the current URL list to the first N URLs for safer protected-site testing and small-batch runs.
+
 ### Recommended protected-site command
 
 ```bash
@@ -571,6 +574,7 @@ The project is designed to handle this scenario honestly and predictably.
 ---
 
 
+
 ## Long-running scans, warnings, and progress indicators
 
 Some scans can take a while, especially when:
@@ -581,12 +585,13 @@ Some scans can take a while, especially when:
 - pages are very large or have many violations
 - axe analysis takes longer on complex pages
 
-To make this clearer, the tool prints startup advisories and heartbeat lines.
+To make this clearer, the tool prints startup advisories, ETA hints, and heartbeat lines.
 
 ### Startup advisories
 At the start of a scan, the tool may print notices such as:
 
 - large scan detected
+- small-batch mode enabled
 - slow/protected-site mode enabled
 - crawl delay in use
 - retry/backoff policy in use
@@ -594,11 +599,17 @@ At the start of a scan, the tool may print notices such as:
 
 These are informational and help set expectations before the scan begins.
 
-### Heartbeat progress lines
-If a navigation or analysis step takes a while, the tool prints heartbeat lines such as:
+### ETA and heartbeat lines
+Each page starts with an ETA hint, for example:
 
 ```text
-… still working on https://example.com/some-page (axe analysis) | elapsed 22.1s
+[3/25] Scanning: https://example.com/page | ETA remaining: 7.5m
+```
+
+If a navigation or analysis step takes a while, the tool also prints heartbeat lines such as:
+
+```text
+… still working on https://example.com/some-page (axe analysis) | elapsed 22.1s | ETA remaining: 6.3m
 ```
 
 This means the process is still running and has **not stalled**.
@@ -617,6 +628,21 @@ When using:
 - multiple `--retries`
 
 the scan may appear quiet for a while between retries or delays. That is expected.
+
+### Small-batch helper
+For protected or rate-limited sites, you can force the run to use only the first N URLs from the current URL list:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --urls-file ./reports/manual-urls.txt \
+  --slow \
+  --respect-robots \
+  --cloudflare-aware \
+  --batch-size 10
+```
+
+This is useful when you want to test stability before running a larger batch.
 
 
 ## Commands reference
@@ -755,3 +781,16 @@ npm run version:bump
 This tool provides **automated** WCAG checks and is intended to help teams prioritize remediation. It does **not** guarantee legal compliance and does **not** bypass bot protection, WAF rules, or CAPTCHA systems.
 
 This project is licensed under the **MIT License**.
+
+
+Protected-site small-batch run:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --urls-file ./reports/manual-urls.txt \
+  --slow \
+  --respect-robots \
+  --cloudflare-aware \
+  --batch-size 10
+```
