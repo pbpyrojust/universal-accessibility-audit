@@ -44,6 +44,18 @@ function runNodeScript(scriptPath, scriptArgs) {
   });
 }
 
+
+function slugifySite(site) {
+  if (!site) return "site";
+  try {
+    const url = new URL(site);
+    const host = (url.hostname || site).replace(/^www\./, "").toLowerCase();
+    return host.replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
+  } catch {
+    return String(site || "site").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
+  }
+}
+
 function parseSheetUrl(sheetUrl) {
   try {
     const u = new URL(sheetUrl);
@@ -80,7 +92,8 @@ function printBotNotice(site) {
 function main() {
   const args = parseArgs(process.argv);
   const site = args.site;
-  const runId = args["run-id"] || getRunIdFromNow();
+  const siteSlug = slugifySite(site || args["sitemap-url"] || "site");
+  const runId = args["run-id"] || `${siteSlug}-${getRunIdFromNow()}`;
   const baseOutDir = path.resolve(process.cwd(), args["out-dir"] || "reports");
   const outDir = path.join(baseOutDir, runId);
   fs.mkdirSync(outDir, { recursive: true });
@@ -94,6 +107,7 @@ function main() {
   }
 
   const urlsFile = args["urls-file"] ? path.resolve(args["urls-file"]) : path.join(outDir, "urls.txt");
+  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
   // Step 1: Build URLs unless user provided a URL file
   if (!args["urls-file"]) {
@@ -105,6 +119,7 @@ function main() {
     if (args["exclude-path"]) buildArgs.push("--exclude-path", args["exclude-path"]);
     if (args["include-sitemaps"]) buildArgs.push("--include-sitemaps", args["include-sitemaps"]);
     if (args["include-all-sitemaps"]) buildArgs.push("--include-all-sitemaps");
+    if (args["batch-size"]) buildArgs.push("--batch-size", args["batch-size"]);
 
     const build = runNodeScript(path.resolve("scripts/build-urls-from-sitemap.mjs"), buildArgs);
     if (build.status !== 0) {
@@ -114,6 +129,26 @@ function main() {
   } else {
     console.log("\n=== Step 1/4: Using provided URL file ===");
     console.log(`Using URLs file: ${urlsFile}`);
+  }
+
+  if (batchSize > 0) {
+    try {
+      const raw = fs.readFileSync(urlsFile, "utf8");
+      const urls = raw.split(/\r?\n/g).map((s) => s.trim()).filter(Boolean);
+      if (urls.length > batchSize) {
+        fs.writeFileSync(urlsFile, urls.slice(0, batchSize).join("\n") + "\n", "utf8");
+        console.log(`ℹ Small-batch mode enabled (--batch-size ${batchSize}). Trimmed URL list from ${urls.length} to ${batchSize} URL(s) for this run.`);
+      } else {
+        console.log(`ℹ Small-batch mode enabled, but URL list already has ${urls.length} URL(s).`);
+      }
+    } catch (e) {
+      console.warn(`WARNING: Could not apply --batch-size to ${urlsFile}: ${String(e?.message || e)}`);
+    }
+  }
+
+  if (args["slow"] || args["cloudflare-aware"]) {
+    console.log("\nℹ Protected-site / conservative mode enabled. Long runs, retries, and delays can make the scan take a while.");
+    console.log("ℹ Heartbeat progress lines will appear on long navigation or analysis steps so the scan does not look stalled.");
   }
 
   // Step 2: Run audit
@@ -132,6 +167,7 @@ function main() {
   if (args["retries"]) auditArgs.push("--retries", args["retries"]);
   if (args["backoff-ms"]) auditArgs.push("--backoff-ms", args["backoff-ms"]);
   if (args["crawl-delay-ms"]) auditArgs.push("--crawl-delay-ms", args["crawl-delay-ms"]);
+  if (args["batch-size"]) auditArgs.push("--batch-size", args["batch-size"]);
 
   const audit = runNodeScript(path.resolve("scripts/a11y-audit.mjs"), auditArgs);
   if (audit.status !== 0) {
