@@ -1,7 +1,7 @@
 # Universal Accessibility Audit (Playwright + axe-core)
 
 **Created by:** Justin Adams — JustWhat.net — justin@justwhat.net  
-**Version:** 0.1.15
+**Version:** 0.1.17
 
 A universal, command-line accessibility audit tool that:
 
@@ -77,7 +77,7 @@ This performs:
 1. sitemap discovery / URL list build
 2. Playwright + axe-core page scan
 3. docs-ready summary generation
-4. GitHub ticket backlog generation
+4. ticket/backlog generation
 
 ### Protected-site conservative audit
 For sites that may be rate limited or behind Cloudflare / WAF protections:
@@ -127,7 +127,7 @@ reports/
   Docs-ready report content you can paste into Google Docs
 
 - **`a11y-github-tickets.csv`**  
-  One row per recommended GitHub issue
+  One row per recommended ticket or work item
 
 - **`a11y-image-alts.csv`**  
   Image alt text inventory with readability scoring and suggested improvements
@@ -310,9 +310,9 @@ These are intended to make ticket creation easier.
 
 ---
 
-## GitHub ticket workflow
+## Ticketing / project-management workflow
 
-### Ticket backlog CSV
+### Ticket / project-management backlog CSV
 Each run also generates:
 
 - **`a11y-github-tickets.csv`**
@@ -326,7 +326,7 @@ This file is grouped into recommended issues:
 1. Run the audit
 2. Import `a11y-violations.csv` into Google Sheets
 3. Review `a11y-github-tickets.csv`
-4. Create global/component tickets first
+4. Create global/component tickets or work items first
 5. Re-run after fixes
 6. Only create net-new page tickets after the global fixes land
 
@@ -569,6 +569,55 @@ This is common on:
 The project is designed to handle this scenario honestly and predictably.
 
 ---
+
+
+## Long-running scans, warnings, and progress indicators
+
+Some scans can take a while, especially when:
+
+- the site has **many pages**
+- you are using `--slow`
+- the site has **Cloudflare / WAF / bot protection**
+- pages are very large or have many violations
+- axe analysis takes longer on complex pages
+
+To make this clearer, the tool prints startup advisories and heartbeat lines.
+
+### Startup advisories
+At the start of a scan, the tool may print notices such as:
+
+- large scan detected
+- slow/protected-site mode enabled
+- crawl delay in use
+- retry/backoff policy in use
+- Cloudflare-aware detection enabled
+
+These are informational and help set expectations before the scan begins.
+
+### Heartbeat progress lines
+If a navigation or analysis step takes a while, the tool prints heartbeat lines such as:
+
+```text
+… still working on https://example.com/some-page (axe analysis) | elapsed 22.1s
+```
+
+This means the process is still running and has **not stalled**.
+
+### Important note
+A page with many violations, lots of DOM nodes, or heavy client-side rendering may legitimately take longer to analyze. The heartbeat output is there to make long pages easier to trust.
+
+### Protected-site note
+When using:
+
+- `--slow`
+- `--respect-robots`
+- `--cloudflare-aware`
+- high `--crawl-delay-ms`
+- high `--backoff-ms`
+- multiple `--retries`
+
+the scan may appear quiet for a while between retries or delays. That is expected.
+
 
 ## Commands reference
 

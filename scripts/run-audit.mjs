@@ -37,6 +37,17 @@ function getRunIdFromNow() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
+function slugifySite(site) {
+  if (!site) return "site";
+  try {
+    const url = new URL(site);
+    const host = (url.hostname || site).replace(/^www\./, "").toLowerCase();
+    return host.replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
+  } catch {
+    return String(site || "site").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
+  }
+}
+
 function runNodeScript(scriptPath, scriptArgs) {
   return spawnSync(process.execPath, [scriptPath, ...scriptArgs], {
     stdio: "inherit",
@@ -80,7 +91,8 @@ function printBotNotice(site) {
 function main() {
   const args = parseArgs(process.argv);
   const site = args.site;
-  const runId = args["run-id"] || getRunIdFromNow();
+  const siteSlug = slugifySite(site || args["sitemap-url"] || "site");
+  const runId = args["run-id"] || `${siteSlug}-${getRunIdFromNow()}`;
   const baseOutDir = path.resolve(process.cwd(), args["out-dir"] || "reports");
   const outDir = path.join(baseOutDir, runId);
   fs.mkdirSync(outDir, { recursive: true });
@@ -114,6 +126,11 @@ function main() {
   } else {
     console.log("\n=== Step 1/4: Using provided URL file ===");
     console.log(`Using URLs file: ${urlsFile}`);
+  }
+
+  if (args["slow"] || args["cloudflare-aware"]) {
+    console.log("\nℹ Protected-site / conservative mode enabled. Long runs, retries, and delays can make the scan take a while.");
+    console.log("ℹ Heartbeat progress lines will appear on long navigation or analysis steps so the scan does not look stalled.");
   }
 
   // Step 2: Run audit

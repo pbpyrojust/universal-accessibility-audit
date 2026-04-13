@@ -39,6 +39,10 @@ function normalizeUrl(u) {
   }
 }
 
+function decodeUrlForDisplay(u) {
+  try { return decodeURI(String(u || "")); } catch { return String(u || ""); }
+}
+
 function loadUrlsFromFile(filePath) {
   return fs.readFileSync(filePath, "utf8")
     .split(/\r?\n/g)
@@ -212,12 +216,7 @@ function rateAltText(alt, src) {
   if (a === "") {
     issues.push("alt_empty");
     const sug = suggestedAltFromSrc(src);
-    return {
-      score: 80,
-      rating: "Needs review",
-      issues: issues.join("|"),
-      suggested_alt: sug ? `If informative, use something like: ${sug}` : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='').",
-    };
+    return { score: 80, rating: "Needs review", issues: issues.join("|"), suggested_alt: sug ? `If informative, use something like: ${sug}` : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='')." };
   }
   if (!a) { issues.push("alt_missing"); score = 0; }
   if (a && a.length < 4) { issues.push("too_short"); score -= 30; }
@@ -230,15 +229,49 @@ function rateAltText(alt, src) {
   return { score, rating, issues: issues.join("|"), suggested_alt: suggested };
 }
 
+function formatElapsed(startedAt) {
+  const sec = Math.max(0, (Date.now() - startedAt) / 1000);
+  if (sec < 90) return `${sec.toFixed(1)}s`;
+  const min = sec / 60;
+  if (min < 90) return `${min.toFixed(1)}m`;
+  const hr = min / 60;
+  return `${hr.toFixed(2)}h`;
+}
+
+function createHeartbeat(label, intervalMs = 10000) {
+  const started = Date.now();
+  const timer = setInterval(() => {
+    process.stdout.write(`   … still working on ${label} | elapsed ${formatElapsed(started)}\n`);
+  }, intervalMs);
+  return () => clearInterval(timer);
+}
+
+function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, retries, backoffMs }) {
+  if (urlCount >= 100) console.log(`ℹ Large scan detected (${urlCount} pages). This may take a while.`);
+  if (urlCount >= 500) console.log("⚠ Very large scan. Consider smaller batches if the site is sensitive or rate-limited.");
+  if (slowMode) {
+    console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
+    console.log("ℹ Slow/protected-site scans can take significantly longer than normal runs.");
+  }
+  if (cfAware) {
+    console.log("ℹ Cloudflare-aware challenge detection enabled (--cloudflare-aware).");
+    console.log("ℹ Challenge pages, retries, and backoff can make scans look quiet for a while. Heartbeat lines will show progress.");
+  }
+  if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s between pages.`);
+  if (retries > 1 || backoffMs >= 5000) console.log(`ℹ Retry policy: ${retries} retries, base backoff ${Math.ceil(backoffMs/1000)}s.`);
+}
+
 async function gotoWithRetry(page, url, opts = {}) {
   const { slow = false, retries = 1, backoffMs = 3000, timeoutMs = 90000, cfAware = false } = opts;
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const stopHeartbeat = createHeartbeat(`${decodeUrlForDisplay(url)} (navigation attempt ${attempt + 1}/${retries + 1})`, 10000);
     try {
       const response = await page.goto(url, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: timeoutMs });
       await page.waitForTimeout(slow ? 2000 : 800);
       const html = await page.content();
       const bot = cfAware ? detectBotChallengeHtml(html, response?.status?.() || 0) : { detected: false, type: "", status: 0 };
+      stopHeartbeat();
       if (bot.detected) {
         lastErr = new Error(`bot_protection:${bot.type}`);
         if (attempt < retries) {
@@ -251,6 +284,7 @@ async function gotoWithRetry(page, url, opts = {}) {
       }
       return { response, bot };
     } catch (e) {
+      stopHeartbeat();
       lastErr = e;
       if (attempt < retries) {
         const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
@@ -283,12 +317,7 @@ async function main() {
   if (respectRobots) robotsCfg = await buildRobotsMatcher(startUrl);
   const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
 
-  if (slowMode) console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
-  if (respectRobots) {
-    console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
-    if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s.`);
-  }
-  if (cfAware) console.log("ℹ Cloudflare-aware challenge detection enabled (--cloudflare-aware).");
+  if (respectRobots) console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
 
   let urls = [];
   if (args.crawl) {
@@ -303,6 +332,8 @@ async function main() {
   } else {
     urls = [startUrl];
   }
+
+  printStartupAdvisories({ urlCount: urls.length, slowMode, cfAware, crawlDelayMs, retries, backoffMs });
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: "Universal-A11y-Audit (Playwright + axe-core)" });
@@ -322,7 +353,7 @@ async function main() {
     const url = urls[i];
     const idx = i + 1;
     const pageStart = Date.now();
-    console.log(`[${idx}/${urls.length}] Scanning: ${url}`);
+    console.log(`[${idx}/${urls.length}] Scanning: ${decodeUrlForDisplay(url)}`);
     const pageResult = { url, ok: true, error: null, axe: null, timestamp: new Date().toISOString() };
 
     try {
@@ -350,7 +381,7 @@ async function main() {
           let abs = im.src;
           try { abs = new URL(im.src, url).toString(); } catch {}
           let rated = { score: 0, rating: "Needs review", issues: "alt_unrated", suggested_alt: "" };
-          try { rated = rateAltText(im.alt_present ? im.alt : "", abs); } catch (e) {}
+          try { rated = rateAltText(im.alt_present ? im.alt : "", abs); } catch {}
           imageAltRows.push({
             page_url: url,
             image_url: abs,
@@ -365,10 +396,13 @@ async function main() {
           });
         }
       } catch (e) {
-        console.warn(`   ↳ Alt report skipped for ${url}: ${String(e?.message || e)}`);
+        console.warn(`   ↳ Alt report skipped for ${decodeUrlForDisplay(url)}: ${String(e?.message || e)}`);
       }
 
+      const stopAxeHeartbeat = createHeartbeat(`${decodeUrlForDisplay(url)} (axe analysis)`, 10000);
       const axe = await runAxe(page);
+      stopAxeHeartbeat();
+
       pageResult.axe = axe;
       let pageViolationNodes = 0;
       for (const v of axe.violations || []) {
@@ -402,9 +436,7 @@ async function main() {
         }
       }
       totalViolationNodes += pageViolationNodes;
-      const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
-      const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
-      console.log(`   ↳ Done in ${elapsed}s | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${totalElapsed}m`);
+      console.log(`   ↳ Done in ${formatElapsed(pageStart)} | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${formatElapsed(startedAt)}`);
     } catch (err) {
       pageResult.ok = false;
       pageResult.error = String(err?.message || err);
@@ -430,9 +462,7 @@ async function main() {
         page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
         recommendation: isBot ? "Back off, wait before retrying, and consider smaller batches with --slow --respect-robots --cloudflare-aware." : "Confirm the page is publicly accessible without auth/bot protection. Re-run scan; if persistent, ticket separately.",
       });
-      const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
-      const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
-      console.log(`   ↳ ERROR in ${elapsed}s | elapsed: ${totalElapsed}m`);
+      console.log(`   ↳ ERROR in ${formatElapsed(pageStart)} | elapsed: ${formatElapsed(startedAt)}`);
     }
     siteResults.push(pageResult);
   }
