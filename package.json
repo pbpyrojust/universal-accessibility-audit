@@ -1,6 +1,6 @@
 {
-  "name": "universal-accessibility-audit",
-  "private": true,
+  "name": "@pbpyrojust/universal-accessibility-audit",
+  "private": false,
   "type": "module",
   "scripts": {
     "build:urls": "node scripts/build-urls-from-sitemap.mjs --site https://www.example.com --out scripts/urls.txt",
@@ -11,7 +11,10 @@
     "prepare": "husky",
     "version:bump": "node scripts/bump-version.mjs",
     "sitemap:xml-to-urls": "node scripts/convert-sitemap-xml-to-urls.mjs",
-    "audit:slow": "node scripts/run-audit.mjs --slow --respect-robots --cloudflare-aware"
+    "audit:slow": "node scripts/run-audit.mjs --slow --respect-robots --cloudflare-aware",
+    "cli": "node bin/universal-a11y-audit.mjs",
+    "pack:check": "npm pack --dry-run",
+    "release:tag": "node -e \"const p=require('./package.json'); console.log('git tag v'+p.version+' && git push origin v'+p.version)\""
   },
   "dependencies": {
     "axe-core": "^4.11.1",
@@ -19,12 +22,50 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.57.0"
   },
-  "version": "0.1.19",
-  "description": "Universal accessibility audit runner (Playwright + axe-core) with sitemap discovery and ticket-ready outputs.",
-  "author": "Justin Adams <justin@justwhat.net> (https://justwhat.net)",
-  "homepage": "https://justwhat.net",
+  "version": "0.2.1",
+  "description": "CLI toolkit for accessibility audits with sitemap discovery, Playwright + axe-core scanning, browser-saved sitemap fallback, and ticket-ready outputs.",
+  "author": "Justin Adams (https://justwhat.net)",
+  "homepage": "https://github.com/pbpyrojust/universal-accessibility-audit#readme",
   "license": "MIT",
   "devDependencies": {
     "husky": "^9.1.7"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pbpyrojust/universal-accessibility-audit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pbpyrojust/universal-accessibility-audit/issues"
+  },
+  "keywords": [
+    "accessibility",
+    "wcag",
+    "axe-core",
+    "playwright",
+    "audit",
+    "sitemap",
+    "seo",
+    "cli",
+    "ticketing",
+    "reporting"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "universal-a11y-audit": "bin/universal-a11y-audit.mjs",
+    "uaaudit": "bin/universal-a11y-audit.mjs"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "preferGlobal": true
 }

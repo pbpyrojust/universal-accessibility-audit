@@ -155,7 +155,7 @@ function main() {
   lines.push(`Automated tools do not fully validate: keyboard-only usability, focus order edge cases, screen reader UX, meaning/quality of link text and alt text, form error handling, and media captions/transcripts. Plan a manual pass for these areas before declaring WCAG AA readiness.`);
   lines.push("");
 
-  lines.push(`## How to format a ticket / work item (copy/paste pattern)`);
+  lines.push(`## How to format a GitHub Issue (copy/paste pattern)`);
   lines.push("```");
   lines.push("Title: [A11Y][WCAG] <Short issue name>");
   lines.push("Labels: accessibility, wcag, priority:P1, frontend, global");

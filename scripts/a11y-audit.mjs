@@ -39,10 +39,6 @@ function normalizeUrl(u) {
   }
 }
 
-function decodeUrlForDisplay(u) {
-  try { return decodeURI(String(u || "")); } catch { return String(u || ""); }
-}
-
 function loadUrlsFromFile(filePath) {
   return fs.readFileSync(filePath, "utf8")
     .split(/\r?\n/g)
@@ -216,7 +212,12 @@ function rateAltText(alt, src) {
   if (a === "") {
     issues.push("alt_empty");
     const sug = suggestedAltFromSrc(src);
-    return { score: 80, rating: "Needs review", issues: issues.join("|"), suggested_alt: sug ? `If informative, use something like: ${sug}` : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='')." };
+    return {
+      score: 80,
+      rating: "Needs review",
+      issues: issues.join("|"),
+      suggested_alt: sug ? `If informative, use something like: ${sug}` : "If informative, add a short descriptive alt. If decorative, keep empty alt (alt='').",
+    };
   }
   if (!a) { issues.push("alt_missing"); score = 0; }
   if (a && a.length < 4) { issues.push("too_short"); score -= 30; }
@@ -229,67 +230,15 @@ function rateAltText(alt, src) {
   return { score, rating, issues: issues.join("|"), suggested_alt: suggested };
 }
 
-
-function formatDuration(ms) {
-  const sec = Math.max(0, ms / 1000);
-  if (sec < 90) return `${sec.toFixed(1)}s`;
-  const min = sec / 60;
-  if (min < 90) return `${min.toFixed(1)}m`;
-  const hr = min / 60;
-  return `${hr.toFixed(2)}h`;
-}
-
-function avg(arr) {
-  if (!arr.length) return 0;
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
-}
-
-function estimateRemaining(completedDurations, completedCount, totalCount) {
-  if (completedCount <= 0) return "estimating…";
-  const remaining = Math.max(0, totalCount - completedCount);
-  const etaMs = avg(completedDurations) * remaining;
-  return formatDuration(etaMs);
-}
-
-function formatElapsed(startedAt) {
-  return formatDuration(Date.now() - startedAt);
-}
-
-function createHeartbeat(label, intervalMs = 10000, etaLabel = "") {
-  const started = Date.now();
-  const timer = setInterval(() => {
-    process.stdout.write(`   … still working on ${label} | elapsed ${formatElapsed(started)}${etaLabel ? ` | ${etaLabel}` : ""}\n`);
-  }, intervalMs);
-  return () => clearInterval(timer);
-}
-
-function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize = 0 }) {
-  if (urlCount >= 100) console.log(`ℹ Large scan detected (${urlCount} pages). This may take a while.`);
-  if (batchSize > 0) console.log(`ℹ Small-batch mode enabled (${batchSize} page max for this run).`);
-  if (urlCount >= 500) console.log("⚠ Very large scan. Consider smaller batches if the site is sensitive or rate-limited.");
-  if (slowMode) {
-    console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
-    console.log("ℹ Slow/protected-site scans can take significantly longer than normal runs.");
-  }
-  if (cfAware) {
-    console.log("ℹ Cloudflare-aware challenge detection enabled (--cloudflare-aware).");
-    console.log("ℹ Challenge pages, retries, and backoff can make scans look quiet for a while. Heartbeat lines will show progress.");
-  }
-  if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s between pages.`);
-  if (retries > 1 || backoffMs >= 5000) console.log(`ℹ Retry policy: ${retries} retries, base backoff ${Math.ceil(backoffMs/1000)}s.`);
-}
-
 async function gotoWithRetry(page, url, opts = {}) {
   const { slow = false, retries = 1, backoffMs = 3000, timeoutMs = 90000, cfAware = false } = opts;
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const stopHeartbeat = createHeartbeat(`${decodeUrlForDisplay(url)} (navigation attempt ${attempt + 1}/${retries + 1})`, 10000);
     try {
       const response = await page.goto(url, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: timeoutMs });
       await page.waitForTimeout(slow ? 2000 : 800);
       const html = await page.content();
       const bot = cfAware ? detectBotChallengeHtml(html, response?.status?.() || 0) : { detected: false, type: "", status: 0 };
-      stopHeartbeat();
       if (bot.detected) {
         lastErr = new Error(`bot_protection:${bot.type}`);
         if (attempt < retries) {
@@ -302,7 +251,6 @@ async function gotoWithRetry(page, url, opts = {}) {
       }
       return { response, bot };
     } catch (e) {
-      stopHeartbeat();
       lastErr = e;
       if (attempt < retries) {
         const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
@@ -330,13 +278,17 @@ async function main() {
   const backoffMs = args["backoff-ms"] ? Number(args["backoff-ms"]) : (slowMode ? 8000 : 3000);
   const maxPages = args["max-pages"] ? Number(args["max-pages"]) : 50;
   const respectRobots = Boolean(args["respect-robots"]);
-  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
   let robotsCfg = { isAllowedUrl: null, crawlDelayMs: 0 };
   if (respectRobots) robotsCfg = await buildRobotsMatcher(startUrl);
   const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
 
-  if (respectRobots) console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
+  if (slowMode) console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
+  if (respectRobots) {
+    console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
+    if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s.`);
+  }
+  if (cfAware) console.log("ℹ Cloudflare-aware challenge detection enabled (--cloudflare-aware).");
 
   let urls = [];
   if (args.crawl) {
@@ -352,8 +304,6 @@ async function main() {
     urls = [startUrl];
   }
 
-  printStartupAdvisories({ urlCount: urls.length, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize });
-
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: "Universal-A11y-Audit (Playwright + axe-core)" });
   const page = await context.newPage();
@@ -362,7 +312,6 @@ async function main() {
   const csvRows = [];
   const imageAltRows = [];
   const startedAt = Date.now();
-  const completedDurations = [];
   let totalViolationNodes = 0;
   let pageErrors = 0;
   const byImpact = new Map();
@@ -373,8 +322,7 @@ async function main() {
     const url = urls[i];
     const idx = i + 1;
     const pageStart = Date.now();
-    const etaBefore = estimateRemaining(completedDurations, i, urls.length);
-    console.log(`[${idx}/${urls.length}] Scanning: ${decodeUrlForDisplay(url)} | ETA remaining: ${etaBefore}`);
+    console.log(`[${idx}/${urls.length}] Scanning: ${url}`);
     const pageResult = { url, ok: true, error: null, axe: null, timestamp: new Date().toISOString() };
 
     try {
@@ -402,7 +350,7 @@ async function main() {
           let abs = im.src;
           try { abs = new URL(im.src, url).toString(); } catch {}
           let rated = { score: 0, rating: "Needs review", issues: "alt_unrated", suggested_alt: "" };
-          try { rated = rateAltText(im.alt_present ? im.alt : "", abs); } catch {}
+          try { rated = rateAltText(im.alt_present ? im.alt : "", abs); } catch (e) {}
           imageAltRows.push({
             page_url: url,
             image_url: abs,
@@ -417,13 +365,10 @@ async function main() {
           });
         }
       } catch (e) {
-        console.warn(`   ↳ Alt report skipped for ${decodeUrlForDisplay(url)}: ${String(e?.message || e)}`);
+        console.warn(`   ↳ Alt report skipped for ${url}: ${String(e?.message || e)}`);
       }
 
-      const stopAxeHeartbeat = createHeartbeat(`${decodeUrlForDisplay(url)} (axe analysis)`, 10000, `ETA remaining: ${estimateRemaining(completedDurations, i, urls.length)}`);
       const axe = await runAxe(page);
-      stopAxeHeartbeat();
-
       pageResult.axe = axe;
       let pageViolationNodes = 0;
       for (const v of axe.violations || []) {
@@ -457,8 +402,9 @@ async function main() {
         }
       }
       totalViolationNodes += pageViolationNodes;
-      completedDurations.push(Date.now() - pageStart);
-      console.log(`   ↳ Done in ${formatElapsed(pageStart)} | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${formatElapsed(startedAt)} | ETA remaining: ${estimateRemaining(completedDurations, i + 1, urls.length)}`);
+      const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
+      const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
+      console.log(`   ↳ Done in ${elapsed}s | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${totalElapsed}m`);
     } catch (err) {
       pageResult.ok = false;
       pageResult.error = String(err?.message || err);
@@ -484,8 +430,9 @@ async function main() {
         page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
         recommendation: isBot ? "Back off, wait before retrying, and consider smaller batches with --slow --respect-robots --cloudflare-aware." : "Confirm the page is publicly accessible without auth/bot protection. Re-run scan; if persistent, ticket separately.",
       });
-      completedDurations.push(Date.now() - pageStart);
-      console.log(`   ↳ ERROR in ${formatElapsed(pageStart)} | elapsed: ${formatElapsed(startedAt)} | ETA remaining: ${estimateRemaining(completedDurations, i + 1, urls.length)}`);
+      const elapsed = ((Date.now() - pageStart) / 1000).toFixed(1);
+      const totalElapsed = ((Date.now() - startedAt) / 60).toFixed(1);
+      console.log(`   ↳ ERROR in ${elapsed}s | elapsed: ${totalElapsed}m`);
     }
     siteResults.push(pageResult);
   }

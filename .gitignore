@@ -1,9 +1,32 @@
 # Dependencies / build output
 node_modules/
 reports/
+!reports/.gitkeep
 
-# Optional local url list
+# Optional local URL lists / pointers
 scripts/urls.txt
+latest
+
+# Local auth / registry config
+.npmrc
+!.npmrc.example
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# Browser-saved sitemap exports and local XML fixtures
+*.xml
+!example-*.xml
+
+# Playwright / test artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# npm pack artifacts
+*.tgz
 
 # macOS
 .DS_Store
@@ -19,6 +42,9 @@ $RECYCLE.BIN/
 
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
 # Temp
 tmp/
@@ -30,8 +56,3 @@ temp/
 # Editor / IDE
 .vscode/
 .idea/
-
-# Environment
-.env
-.env.*
-!.env.example

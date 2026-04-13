@@ -37,17 +37,6 @@ function getRunIdFromNow() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function slugifySite(site) {
-  if (!site) return "site";
-  try {
-    const url = new URL(site);
-    const host = (url.hostname || site).replace(/^www\./, "").toLowerCase();
-    return host.replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
-  } catch {
-    return String(site || "site").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
-  }
-}
-
 function runNodeScript(scriptPath, scriptArgs) {
   return spawnSync(process.execPath, [scriptPath, ...scriptArgs], {
     stdio: "inherit",
@@ -91,8 +80,7 @@ function printBotNotice(site) {
 function main() {
   const args = parseArgs(process.argv);
   const site = args.site;
-  const siteSlug = slugifySite(site || args["sitemap-url"] || "site");
-  const runId = args["run-id"] || `${siteSlug}-${getRunIdFromNow()}`;
+  const runId = args["run-id"] || getRunIdFromNow();
   const baseOutDir = path.resolve(process.cwd(), args["out-dir"] || "reports");
   const outDir = path.join(baseOutDir, runId);
   fs.mkdirSync(outDir, { recursive: true });
@@ -106,7 +94,6 @@ function main() {
   }
 
   const urlsFile = args["urls-file"] ? path.resolve(args["urls-file"]) : path.join(outDir, "urls.txt");
-  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
   // Step 1: Build URLs unless user provided a URL file
   if (!args["urls-file"]) {
@@ -127,31 +114,6 @@ function main() {
   } else {
     console.log("\n=== Step 1/4: Using provided URL file ===");
     console.log(`Using URLs file: ${urlsFile}`);
-  }
-
-  if (batchSize > 0) {
-    console.log(`\nℹ Small-batch mode enabled (--batch-size ${batchSize}). This is useful for protected or rate-limited sites.`);
-  }
-  if (args["slow"] || args["cloudflare-aware"]) {
-    console.log("\nℹ Protected-site / conservative mode enabled. Long runs, retries, and delays can make the scan take a while.");
-    console.log("ℹ Heartbeat progress lines will appear on long navigation or analysis steps so the scan does not look stalled.");
-  }
-
-
-  if (batchSize > 0) {
-    try {
-      const raw = fs.readFileSync(urlsFile, "utf8");
-      const urls = raw.split(/\r?\n/g).map((s) => s.trim()).filter(Boolean);
-      if (urls.length > batchSize) {
-        const trimmed = urls.slice(0, batchSize);
-        fs.writeFileSync(urlsFile, trimmed.join("\n") + "\n", "utf8");
-        console.log(`ℹ --batch-size enabled. Trimmed URL list from ${urls.length} to ${trimmed.length} URL(s) for this run.`);
-      } else {
-        console.log(`ℹ --batch-size enabled, but URL list already has ${urls.length} URL(s).`);
-      }
-    } catch (e) {
-      console.warn(`WARNING: Could not apply --batch-size to ${urlsFile}: ${String(e?.message || e)}`);
-    }
   }
 
   // Step 2: Run audit

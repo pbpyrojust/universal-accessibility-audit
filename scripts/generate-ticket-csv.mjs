@@ -2,7 +2,7 @@
 /**
  * generate-ticket-csv.mjs
  *
- * Generates a "one row per ticket" CSV from a run folder:
+ * Generates a "one row per GitHub ticket" CSV from a run folder:
  *  - Reads: a11y-violations.csv + a11y-run-metadata.json (if present)
  *  - Writes: a11y-github-tickets.csv
  *
@@ -10,7 +10,7 @@
  *  - Global tickets: grouped by (rule_id, priority) when the issue spans many pages
  *  - Page tickets: grouped by (page_url, rule_id, priority)
  *
- * This is designed for project-management systems: you can bulk-create issues from rows.
+ * This is designed for GitHub Projects: you can bulk-create issues from rows.
  *
  * Usage:
  *  node scripts/generate-ticket-csv.mjs --run-dir reports/20260122-141010 --site https://example.com
@@ -161,7 +161,7 @@ function maxPriority(a, b) {
 
 
 function descriptionFor(t) {
-  // Keep this single-line and paste-friendly for ticket / work items
+  // Keep this single-line and paste-friendly for GitHub Issues
   const parts = [];
   const scope = t.ticket_type === "Global" ? "Global/site-wide" : "Page-specific";
   parts.push(`${scope} accessibility issue detected by automated scan (Playwright + axe-core).`);
@@ -376,17 +376,17 @@ function main() {
     if (t.page_url) t.page_evidence_url = sheetFilterUrl(sheetId, sheetGid, "page_url", t.page_url);
 
     // github formatting
-    t.ticket_description = descriptionFor(t);
-    t.ticket_title = titleFor(t);
-    t.ticket_labels = labelsFor(t);
+    t.github_description = descriptionFor(t);
+    t.github_title = titleFor(t);
+    t.github_labels = labelsFor(t);
   }
 
   for (const t of pageKeyed.values()) {
     t.rule_evidence_url = sheetFilterUrl(sheetId, sheetGid, "rule_id", t.rule_id);
     t.page_evidence_url = sheetFilterUrl(sheetId, sheetGid, "page_url", t.page_url);
-    t.ticket_description = descriptionFor(t);
-    t.ticket_title = titleFor(t);
-    t.ticket_labels = labelsFor(t);
+    t.github_description = descriptionFor(t);
+    t.github_title = titleFor(t);
+    t.github_labels = labelsFor(t);
   }
 
   // Combine and sort: Global first, then Page; priority order
@@ -417,9 +417,9 @@ function main() {
     "rule_evidence_url",
     "page_evidence_url",
     "priority_evidence_url",
-    "ticket_description",
-    "ticket_title",
-    "ticket_labels",
+    "github_description",
+    "github_title",
+    "github_labels",
   ];
 
   fs.writeFileSync(outPath, toCsv(allTickets, columns), "utf8");
