@@ -2,7 +2,7 @@
 
 **Package:** `@pbpyrojust/universal-accessibility-audit`  
 **CLI commands:** `universal-a11y-audit`, `uaaudit`  
-**Version:** 0.2.3
+**Version:** 0.2.4
 
 A CLI toolkit for accessibility audits with:
 
@@ -298,3 +298,5 @@ node scripts/run-audit.mjs \
   --cloudflare-aware \
   --batch-size 10
 ```
+
+> Fix note: run folders now consistently use `site-name + timestamp`, for example `example.com-20260307-094546`.

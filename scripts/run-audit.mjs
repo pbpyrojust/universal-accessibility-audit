@@ -92,7 +92,8 @@ function printBotNotice(site) {
 function main() {
   const args = parseArgs(process.argv);
   const site = args.site;
-  const runId = args["run-id"] || getRunIdFromNow();
+  const siteSlug = slugifySite(site || args["sitemap-url"] || "site");
+  const runId = args["run-id"] || `${siteSlug}-${getRunIdFromNow()}`;
   const baseOutDir = path.resolve(process.cwd(), args["out-dir"] || "reports");
   const outDir = path.join(baseOutDir, runId);
   fs.mkdirSync(outDir, { recursive: true });
