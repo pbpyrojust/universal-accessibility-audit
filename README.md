@@ -2,7 +2,7 @@
 
 **Package:** `@pbpyrojust/universal-accessibility-audit`  
 **CLI commands:** `universal-a11y-audit`, `uaaudit`  
-**Version:** 0.2.2
+**Version:** 0.2.3
 
 A CLI toolkit for accessibility audits with:
 
@@ -241,3 +241,60 @@ node scripts/convert-sitemap-xml-to-urls.mjs \
 ## License
 
 MIT
+
+
+
+## Long-running scans, warnings, and progress indicators
+
+Some scans can take a while, especially when:
+
+- the site has **many pages**
+- you are using `--slow`
+- the site has **Cloudflare / WAF / bot protection**
+- pages are very large or have many violations
+- axe analysis takes longer on complex pages
+
+To make this clearer, the tool prints startup advisories, ETA hints, and heartbeat lines.
+
+### Startup advisories
+At the start of a scan, the tool may print notices such as:
+
+- large scan detected
+- small-batch mode enabled
+- slow/protected-site mode enabled
+- crawl delay in use
+- retry/backoff policy in use
+- Cloudflare-aware detection enabled
+
+These are informational and help set expectations before the scan begins.
+
+### ETA and heartbeat lines
+Each page starts with an ETA hint, for example:
+
+```text
+[3/25] Scanning: https://example.com/page | ETA remaining: 7.5m
+```
+
+If a navigation or analysis step takes a while, the tool also prints heartbeat lines such as:
+
+```text
+… still working on https://example.com/some-page (axe analysis) | elapsed 22.1s | ETA remaining: 6.3m
+```
+
+This means the process is still running and has **not stalled**.
+
+### Important note
+A page with many violations, lots of DOM nodes, or heavy client-side rendering may legitimately take longer to analyze. The heartbeat output is there to make long pages easier to trust.
+
+
+Protected-site small-batch run:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --urls-file ./reports/manual-urls.txt \
+  --slow \
+  --respect-robots \
+  --cloudflare-aware \
+  --batch-size 10
+```

@@ -44,6 +44,18 @@ function runNodeScript(scriptPath, scriptArgs) {
   });
 }
 
+
+function slugifySite(site) {
+  if (!site) return "site";
+  try {
+    const url = new URL(site);
+    const host = (url.hostname || site).replace(/^www\./, "").toLowerCase();
+    return host.replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
+  } catch {
+    return String(site || "site").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "") || "site";
+  }
+}
+
 function parseSheetUrl(sheetUrl) {
   try {
     const u = new URL(sheetUrl);
@@ -94,6 +106,7 @@ function main() {
   }
 
   const urlsFile = args["urls-file"] ? path.resolve(args["urls-file"]) : path.join(outDir, "urls.txt");
+  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
   // Step 1: Build URLs unless user provided a URL file
   if (!args["urls-file"]) {
@@ -105,6 +118,7 @@ function main() {
     if (args["exclude-path"]) buildArgs.push("--exclude-path", args["exclude-path"]);
     if (args["include-sitemaps"]) buildArgs.push("--include-sitemaps", args["include-sitemaps"]);
     if (args["include-all-sitemaps"]) buildArgs.push("--include-all-sitemaps");
+    if (batchSize > 0) buildArgs.push("--batch-size", String(batchSize));
 
     const build = runNodeScript(path.resolve("scripts/build-urls-from-sitemap.mjs"), buildArgs);
     if (build.status !== 0) {
@@ -114,6 +128,23 @@ function main() {
   } else {
     console.log("\n=== Step 1/4: Using provided URL file ===");
     console.log(`Using URLs file: ${urlsFile}`);
+  }
+
+
+  if (batchSize > 0) {
+    try {
+      const raw = fs.readFileSync(urlsFile, "utf8");
+      const urls = raw.split(/\r?\n/g).map((s) => s.trim()).filter(Boolean);
+      if (urls.length > batchSize) {
+        const trimmed = urls.slice(0, batchSize);
+        fs.writeFileSync(urlsFile, trimmed.join("\n") + "\n", "utf8");
+        console.log(`ℹ --batch-size enabled. Trimmed URL list from ${urls.length} to ${trimmed.length} URL(s) for this run.`);
+      } else {
+        console.log(`ℹ --batch-size enabled, but URL list already has ${urls.length} URL(s).`);
+      }
+    } catch (e) {
+      console.warn(`WARNING: Could not apply --batch-size to ${urlsFile}: ${String(e?.message || e)}`);
+    }
   }
 
   // Step 2: Run audit
