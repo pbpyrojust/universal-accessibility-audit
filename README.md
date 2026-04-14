@@ -9,7 +9,7 @@ A CLI toolkit for accessibility audits with:
 - sitemap discovery for WordPress, Yoast, Drupal, and standard sitemap.xml setups
 - Playwright + axe-core scanning
 - manual browser-saved sitemap XML fallback for protected sites
-- CSV, JSON, markdown, and backlog/ticket-ready outputs
+- CSV, JSON, markdown, and backlog/ticket-ready outputs with importance and likely out-of-control flags
 - image alt text inventory reporting
 
 This repo works in two ways:
@@ -100,67 +100,37 @@ node scripts/run-audit.mjs \
 ---
 
 
-## Long-running scans, warnings, ETA, and heartbeat progress
+## Importance and out-of-control flags
 
-Some scans can take a while, especially when:
+Violation output now includes an **importance** field in addition to impact/priority. This is intended to help triage what should be handled first in a ticketing or project-management system.
 
-- the site has **many pages**
-- you are using `--slow`
-- the site has **Cloudflare / WAF / bot protection**
-- pages are very large or have many violations
-- axe analysis takes longer on complex pages
+The scan also attempts to flag issues that are **likely out of direct control**, especially when they appear to be inside:
 
-To make this clearer, the tool prints startup advisories, ETA hints, and heartbeat lines.
+- iframes
+- embedded media players
+- third-party widgets
+- externally hosted embeds
 
-### Startup advisories
-At the start of a scan, the tool may print notices such as:
+### New violation output fields
 
-- large scan detected
-- small-batch mode enabled
-- slow/protected-site mode enabled
-- crawl delay in use
-- retry/backoff policy in use
-- Cloudflare-aware detection enabled
+- `importance`
+- `likely_out_of_control`
+- `control_notes`
 
-These are informational and help set expectations before the scan begins.
+### New ticket/backlog fields
 
-### ETA and heartbeat lines
-Each page starts with an ETA hint, for example:
+- `importance`
+- `likely_out_of_control`
+- `control_notes`
+- `ticket_notes`
 
-```text
-[3/25] Scanning: https://example.com/page | ETA remaining: 7.5m
-```
-
-If a navigation or analysis step takes a while, the tool also prints heartbeat lines such as:
-
-```text
-… still working on https://example.com/some-page (axe analysis) | elapsed 22.1s | ETA remaining: 6.3m
-```
-
-This means the process is still running and has **not stalled**.
-
-### Large-scan warning
-When the URL list is large, the tool prints a warning that the scan may take a while. This is especially useful for sitemap-driven sites with hundreds of pages.
-
-### Small-batch helper
-For protected or rate-limited sites, you can force the run to use only the first N URLs from the current URL list:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./reports/manual-urls.txt \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware \
-  --batch-size 10
-```
-
-This is useful when you want to test stability before running a larger batch.
+### Important note
+The out-of-control detection is a **best-effort heuristic**. It is designed to surface likely iframe/embed issues for manual review, not to make a perfect ownership decision automatically.
 
 
 ## Output
 
-Each run writes to a **site-name + timestamp folder** so reports are easy to identify later and never collide across different sites:
+Each run writes to a **site-name + timestamp folder** so reports are easy to identify later:
 
 ```text
 reports/
