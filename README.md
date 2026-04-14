@@ -47,6 +47,95 @@ uaaudit audit --site https://www.example.com
 
 ---
 
+
+## Password-protected, staging, and development sites
+
+The tool can also run against protected sites in two common ways:
+
+### 1. HTTP / Basic Auth
+For environments protected by browser-native username/password auth:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://staging.example.com \
+  --http-username your-user \
+  --http-password your-pass
+```
+
+You can combine that with other flags:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://staging.example.com \
+  --http-username your-user \
+  --http-password your-pass \
+  --slow \
+  --respect-robots \
+  --cloudflare-aware
+```
+
+### 2. Form login via local auth config
+For sites that require a login form, use a local auth config file:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://staging.example.com \
+  --auth-config ./auth.local.json
+```
+
+Example `auth.local.json`:
+
+```json
+{
+  "loginUrl": "https://staging.example.com/login",
+  "username": "your-username",
+  "password": "your-password",
+  "usernameSelector": "input[name='username']",
+  "passwordSelector": "input[name='password']",
+  "submitSelector": "button[type='submit']",
+  "readySelector": "body",
+  "postLoginWaitMs": 2000
+}
+```
+
+You can also override parts of the config with flags:
+
+- `--login-url`
+- `--username`
+- `--password`
+- `--username-selector`
+- `--password-selector`
+- `--submit-selector`
+- `--ready-selector`
+- `--post-login-wait-ms`
+
+### Environment variables
+Instead of putting secrets directly on the command line, you can use environment variables:
+
+```bash
+export A11Y_HTTP_USERNAME=your-user
+export A11Y_HTTP_PASSWORD=your-pass
+```
+
+or for form login:
+
+```bash
+export A11Y_LOGIN_USERNAME=your-user
+export A11Y_LOGIN_PASSWORD=your-pass
+```
+
+### Important security note
+Do **not** commit real auth config files, credentials, or environment files.  
+The project now ignores local auth files such as:
+
+- `*.auth.json`
+- `auth.local.json`
+- `.auth.local.json`
+- `.a11y-auth.local.json`
+
+Use the committed `auth-config.example.json` file only as a template.
+
+
 ## Requirements
 
 - Node.js 20+ recommended for local use

@@ -56,3 +56,8 @@ temp/
 # Editor / IDE
 .vscode/
 .idea/
+
+*.auth.json
+auth.local.json
+.auth.local.json
+.a11y-auth.local.json

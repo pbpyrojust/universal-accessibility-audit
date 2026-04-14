@@ -164,6 +164,17 @@ function main() {
   if (args["retries"]) auditArgs.push("--retries", args["retries"]);
   if (args["backoff-ms"]) auditArgs.push("--backoff-ms", args["backoff-ms"]);
   if (args["crawl-delay-ms"]) auditArgs.push("--crawl-delay-ms", args["crawl-delay-ms"]);
+  if (args["http-username"]) auditArgs.push("--http-username", args["http-username"]);
+  if (args["http-password"]) auditArgs.push("--http-password", args["http-password"]);
+  if (args["auth-config"]) auditArgs.push("--auth-config", args["auth-config"]);
+  if (args["login-url"]) auditArgs.push("--login-url", args["login-url"]);
+  if (args["username"]) auditArgs.push("--username", args["username"]);
+  if (args["password"]) auditArgs.push("--password", args["password"]);
+  if (args["username-selector"]) auditArgs.push("--username-selector", args["username-selector"]);
+  if (args["password-selector"]) auditArgs.push("--password-selector", args["password-selector"]);
+  if (args["submit-selector"]) auditArgs.push("--submit-selector", args["submit-selector"]);
+  if (args["ready-selector"]) auditArgs.push("--ready-selector", args["ready-selector"]);
+  if (args["post-login-wait-ms"]) auditArgs.push("--post-login-wait-ms", args["post-login-wait-ms"]);
 
   const audit = runNodeScript(path.resolve("scripts/a11y-audit.mjs"), auditArgs);
   if (audit.status !== 0) {

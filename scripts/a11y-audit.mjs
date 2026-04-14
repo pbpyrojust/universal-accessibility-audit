@@ -172,6 +172,73 @@ async function runAxe(page) {
   });
 }
 
+
+function loadAuthConfig(filePath) {
+  try {
+    const resolved = path.resolve(process.cwd(), filePath);
+    return JSON.parse(fs.readFileSync(resolved, "utf8"));
+  } catch (e) {
+    throw new Error(`Could not read auth config at ${filePath}: ${String(e?.message || e)}`);
+  }
+}
+
+function getAuthSettings(args) {
+  let cfg = {};
+  if (args["auth-config"]) {
+    cfg = loadAuthConfig(args["auth-config"]);
+  }
+
+  const httpUsername = args["http-username"] || process.env.A11Y_HTTP_USERNAME || cfg.httpUsername || cfg.basicAuthUsername || "";
+  const httpPassword = args["http-password"] || process.env.A11Y_HTTP_PASSWORD || cfg.httpPassword || cfg.basicAuthPassword || "";
+
+  const loginUrl = args["login-url"] || cfg.loginUrl || "";
+  const username = args["username"] || process.env.A11Y_LOGIN_USERNAME || cfg.username || "";
+  const password = args["password"] || process.env.A11Y_LOGIN_PASSWORD || cfg.password || "";
+  const usernameSelector = args["username-selector"] || cfg.usernameSelector || "input[name='log'], input[name='username'], input[type='email']";
+  const passwordSelector = args["password-selector"] || cfg.passwordSelector || "input[name='pwd'], input[name='password'], input[type='password']";
+  const submitSelector = args["submit-selector"] || cfg.submitSelector || "button[type='submit'], input[type='submit']";
+  const readySelector = args["ready-selector"] || cfg.readySelector || "";
+  const postLoginWaitMs = Number(args["post-login-wait-ms"] || cfg.postLoginWaitMs || 2000);
+
+  return {
+    httpCredentials: httpUsername || httpPassword ? { username: httpUsername, password: httpPassword } : null,
+    formAuth: loginUrl && username ? {
+      loginUrl,
+      username,
+      password,
+      usernameSelector,
+      passwordSelector,
+      submitSelector,
+      readySelector,
+      postLoginWaitMs,
+    } : null,
+  };
+}
+
+async function maybePerformFormLogin(page, formAuth, slowMode = false) {
+  if (!formAuth) return false;
+  console.log(`ℹ Attempting form login at ${formAuth.loginUrl}`);
+  await page.goto(formAuth.loginUrl, { waitUntil: slowMode ? "domcontentloaded" : "networkidle", timeout: 90000 });
+  await page.locator(formAuth.usernameSelector).first().fill(formAuth.username);
+  await page.locator(formAuth.passwordSelector).first().fill(formAuth.password || "");
+  if (formAuth.submitSelector) {
+    await Promise.allSettled([
+      page.waitForLoadState(slowMode ? "domcontentloaded" : "networkidle", { timeout: 20000 }),
+      page.locator(formAuth.submitSelector).first().click(),
+    ]);
+  } else {
+    await page.keyboard.press("Enter");
+    await page.waitForLoadState(slowMode ? "domcontentloaded" : "networkidle", { timeout: 20000 }).catch(() => {});
+  }
+  if (formAuth.readySelector) {
+    await page.locator(formAuth.readySelector).first().waitFor({ state: "visible", timeout: 20000 });
+  } else {
+    await page.waitForTimeout(formAuth.postLoginWaitMs || 2000);
+  }
+  console.log("ℹ Form login step completed.");
+  return true;
+}
+
 function formatDuration(ms) {
   const sec = Math.max(0, ms / 1000);
   if (sec < 90) return `${sec.toFixed(1)}s`;
@@ -207,6 +274,7 @@ function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, ret
   if (urlCount >= 100) console.log(`ℹ Large scan detected (${urlCount} pages). This may take a while.`);
   if (urlCount >= 500) console.log("⚠ Very large scan. Consider smaller batches if the site is sensitive or rate-limited.");
   if (batchSize > 0) console.log(`ℹ Small-batch mode enabled (${batchSize} page max for this run).`);
+  if (hasAuth) console.log("ℹ Authenticated mode enabled for protected/staging/dev sites.");
   if (slowMode) {
     console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
     console.log("ℹ Slow/protected-site scans can take significantly longer than normal runs.");
@@ -363,18 +431,26 @@ async function main() {
   const maxPages = args["max-pages"] ? Number(args["max-pages"]) : 50;
   const respectRobots = Boolean(args["respect-robots"]);
   const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
+  const auth = getAuthSettings(args);
 
   let robotsCfg = { isAllowedUrl: null, crawlDelayMs: 0 };
   if (respectRobots) robotsCfg = await buildRobotsMatcher(startUrl);
   const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
 
   if (respectRobots) console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
+  if (auth.httpCredentials) console.log("ℹ HTTP/basic auth credentials configured for this run.");
+  if (auth.formAuth) console.log("ℹ Form-login auth config detected for this run.");
 
   let urls = [];
   if (args.crawl) {
     const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
+    const crawlContextOptions = {};
+    if (auth.httpCredentials) crawlContextOptions.httpCredentials = auth.httpCredentials;
+    const context = await browser.newContext(crawlContextOptions);
     const page = await context.newPage();
+    if (auth.formAuth) {
+      await maybePerformFormLogin(page, auth.formAuth, slowMode);
+    }
     urls = await crawlInternalLinks(page, startUrl, maxPages, { isAllowedUrl: robotsCfg.isAllowedUrl, slow: slowMode, crawlDelayMs });
     await browser.close();
   } else if (args["urls-file"]) {
@@ -388,11 +464,16 @@ async function main() {
     urls = urls.slice(0, batchSize);
   }
 
-  printStartupAdvisories({ urlCount: urls.length, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize });
+  printStartupAdvisories({ urlCount: urls.length, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize, hasAuth: Boolean(auth.httpCredentials || auth.formAuth) });
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ userAgent: "Universal-A11y-Audit (Playwright + axe-core)" });
+  const contextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)" };
+  if (auth.httpCredentials) contextOptions.httpCredentials = auth.httpCredentials;
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
+  if (auth.formAuth) {
+    await maybePerformFormLogin(page, auth.formAuth, slowMode);
+  }
 
   const siteResults = [];
   const csvRows = [];

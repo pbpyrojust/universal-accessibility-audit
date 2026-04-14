@@ -37,6 +37,8 @@ Examples:
   universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
   universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
   universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
+  universal-a11y-audit audit --site https://staging.example.com --http-username myuser --http-password mypass
+  universal-a11y-audit audit --site https://staging.example.com --auth-config ./auth.local.json
 
 If no command is provided, the CLI defaults to 'audit'.
 `);
@@ -73,7 +75,7 @@ switch (command) {
   case "version":
   case "--version":
   case "-v":
-    console.log("0.2.0");
+    console.log("0.2.5");
     break;
   default:
     console.error(`Unknown command: ${command}`);
