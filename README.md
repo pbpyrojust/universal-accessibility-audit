@@ -2,7 +2,7 @@
 
 **Package:** `@pbpyrojust/universal-accessibility-audit`  
 **CLI commands:** `universal-a11y-audit`, `uaaudit`  
-**Version:** 0.2.4
+**Version:** 0.2.6
 
 A CLI toolkit for accessibility audits with:
 

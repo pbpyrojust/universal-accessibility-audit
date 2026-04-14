@@ -270,7 +270,7 @@ function createHeartbeat(label, intervalMs = 10000, etaLabel = "") {
   return () => clearInterval(timer);
 }
 
-function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize = 0 }) {
+function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize = 0, hasAuth = false }) {
   if (urlCount >= 100) console.log(`ℹ Large scan detected (${urlCount} pages). This may take a while.`);
   if (urlCount >= 500) console.log("⚠ Very large scan. Consider smaller batches if the site is sensitive or rate-limited.");
   if (batchSize > 0) console.log(`ℹ Small-batch mode enabled (${batchSize} page max for this run).`);
@@ -285,6 +285,7 @@ function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, ret
   }
   if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s between pages.`);
   if (retries > 1 || backoffMs >= 5000) console.log(`ℹ Retry policy: ${retries} retries, base backoff ${Math.ceil(backoffMs/1000)}s.`);
+  if (hasAuth) console.log("ℹ Auth enabled for this run.");
 }
 
 function mapImpactToPriority(impact) {
@@ -436,6 +437,7 @@ async function main() {
   let robotsCfg = { isAllowedUrl: null, crawlDelayMs: 0 };
   if (respectRobots) robotsCfg = await buildRobotsMatcher(startUrl);
   const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
+  const hasAuth = Boolean(args["http-username"] || args["http-password"] || args["login-url"] || args["username"] || args["password"] || args["auth-config"] || process.env.A11Y_HTTP_USERNAME || process.env.A11Y_HTTP_PASSWORD || process.env.A11Y_LOGIN_USERNAME || process.env.A11Y_LOGIN_PASSWORD);
 
   if (respectRobots) console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
   if (auth.httpCredentials) console.log("ℹ HTTP/basic auth credentials configured for this run.");
