@@ -67,6 +67,26 @@ function topN(map, n) {
   return Array.from(map.entries()).sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
+function formatScore(score) {
+  const n = Number(score);
+  return Number.isFinite(n) ? `${Math.round(n)}/100` : "n/a";
+}
+
+function titleCaseCategory(category) {
+  const labels = {
+    webmcp_protocol: "WebMCP Protocol",
+    accessibility_trees: "Accessibility Trees",
+    semantic_data_formatting: "Semantic Data Formatting",
+    layout_stability: "Layout Stability",
+  };
+  if (labels[category]) return labels[category];
+  return String(category || "")
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function main() {
   const args = parseArgs(process.argv);
   const runDir = args["run-dir"];
@@ -107,15 +127,29 @@ function main() {
   lines.push(`**Run ID:** ${runId}`);
   lines.push(`**Pages scanned:** ${meta.pagesScanned}`);
   lines.push(`**Violating elements (CSV rows):** ${meta.violationNodes}`);
+  if (meta.agenticLighthouse) lines.push(`**Agentic Lighthouse score:** ${formatScore(meta.agenticLighthouse.overallScore)}`);
   lines.push(`**Scan start:** ${meta.startedAt}`);
   lines.push(`**Scan finish:** ${meta.finishedAt}`);
   lines.push("");
 
   lines.push(`## Executive summary`);
-  lines.push(`Automated testing (Playwright + axe-core) identified accessibility issues mapped to WCAG 2.1 A/AA criteria. This report summarizes the results and suggests a ticketing approach focused on high-impact global fixes first (contrast, viewport, ARIA).`);
+  lines.push(`Automated testing (Playwright + axe-core) identified accessibility issues mapped to WCAG 2.1 A/AA criteria. The run also includes agent-readiness scoring for WebMCP-style tool registration, accessibility tree quality, semantic machine-readable data, and layout stability.`);
   lines.push("");
   lines.push(`> Add your Google Sheets link here after importing the CSV: **[LINK]**`);
   lines.push("");
+
+  if (meta.agenticLighthouse) {
+    lines.push(`## Agentic Lighthouse scoring`);
+    lines.push(`Overall score: **${formatScore(meta.agenticLighthouse.overallScore)}** across ${meta.agenticLighthouse.pagesScored || 0} scored page(s).`);
+    lines.push("");
+    const categories = meta.agenticLighthouse.categories || {};
+    for (const [category, data] of Object.entries(categories)) {
+      lines.push(`- **${titleCaseCategory(category)}**: ${formatScore(data.averageScore)} average, ${data.failingPages || 0} page(s) below 70`);
+    }
+    lines.push("");
+    lines.push(`Scoring categories: WebMCP Protocol, Accessibility Trees, Semantic Data Formatting, and Layout Stability. Detailed evidence is in \`agentic-lighthouse-scores.csv\`.`);
+    lines.push("");
+  }
 
   // Severity
   lines.push(`## Findings by severity (axe impact)`);

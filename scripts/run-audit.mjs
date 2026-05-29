@@ -149,7 +149,7 @@ function main() {
   }
 
   // Step 2: Run audit
-  console.log("\n=== Step 2/4: Run accessibility audit (Playwright + axe-core) ===");
+  console.log("\n=== Step 2/4: Run accessibility + agentic Lighthouse audit (Playwright + axe-core) ===");
   const auditArgs = [
     "--urls-file", urlsFile,
     "--out-dir", baseOutDir,

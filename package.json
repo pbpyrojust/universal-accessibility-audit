@@ -22,8 +22,8 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.57.0"
   },
-  "version": "0.2.7",
-  "description": "CLI toolkit for accessibility audits with sitemap discovery, Playwright + axe-core scanning, browser-saved sitemap fallback, and ticket-ready outputs.",
+  "version": "0.2.8",
+  "description": "CLI toolkit for WCAG accessibility audits and Agentic Lighthouse scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs.",
   "author": "Justin Adams (https://justwhat.net)",
   "homepage": "https://github.com/pbpyrojust/universal-accessibility-audit#readme",
   "license": "MIT",
@@ -49,7 +49,12 @@
     "ticketing",
     "reporting",
     "staging",
-    "basic-auth"
+    "basic-auth",
+    "agentic",
+    "lighthouse",
+    "webmcp",
+    "llms.txt",
+    "ai-agents"
   ],
   "engines": {
     "node": ">=20"

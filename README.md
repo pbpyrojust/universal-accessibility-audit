@@ -2,15 +2,17 @@
 
 **Package:** `@pbpyrojust/universal-accessibility-audit`  
 **CLI commands:** `universal-a11y-audit`, `uaaudit`  
-**Version:** 0.2.6
+**Version:** 0.2.7
 
-A CLI toolkit for accessibility audits with:
+A CLI toolkit for accessibility and browser-native AI readiness audits with:
 
 - sitemap discovery for WordPress, Yoast, Drupal, and standard sitemap.xml setups
-- Playwright + axe-core scanning
+- Playwright + axe-core WCAG scanning
+- Agentic Lighthouse-style scoring for browser-native AI readiness
 - manual browser-saved sitemap XML fallback for protected sites
-- CSV, JSON, markdown, and backlog/ticket-ready outputs with importance and likely out-of-control flags
+- CSV, JSON, Markdown, and backlog/ticket-ready outputs with importance and likely out-of-control flags
 - image alt text inventory reporting
+- WebMCP Protocol, Accessibility Trees, Semantic Data Formatting, and Layout Stability scoring
 
 This repo works in two ways:
 
@@ -164,6 +166,12 @@ npx playwright install
 node scripts/run-audit.mjs --site https://www.example.com
 ```
 
+Installed CLI equivalent:
+
+```bash
+universal-a11y-audit audit --site https://www.example.com
+```
+
 ### Protected-site conservative audit
 
 ```bash
@@ -185,6 +193,22 @@ node scripts/run-audit.mjs \
   --cloudflare-aware \
   --batch-size 10
 ```
+
+---
+
+## What a full audit runs
+
+The `audit` workflow runs four steps:
+
+1. Discover URLs from the sitemap, unless `--urls-file` is provided.
+2. Scan pages with Playwright, axe-core, image-alt inventory, and Agentic Lighthouse scoring.
+3. Generate a Google Docs-ready Markdown summary.
+4. Generate a GitHub/backlog-ready ticket CSV, unless `--no-tickets` is used.
+
+The scan is intentionally two-layered:
+
+- **WCAG/axe layer**: finds accessibility violations and affected DOM nodes.
+- **Agentic Lighthouse layer**: scores how well AI/browser agents can understand, call, and safely operate functional page surfaces.
 
 ---
 
@@ -217,6 +241,25 @@ The scan also attempts to flag issues that are **likely out of direct control**,
 The out-of-control detection is a **best-effort heuristic**. It is designed to surface likely iframe/embed issues for manual review, not to make a perfect ownership decision automatically.
 
 
+## Agentic Lighthouse scoring
+
+Each scan now includes an additional agent-readiness score modeled after Lighthouse-style category scoring. This score is separate from axe/WCAG violations and is designed to show how well browser-native AI agents and software test harnesses can understand and safely operate the site.
+
+### Categories
+
+- **WebMCP Protocol**: checks for WebMCP-style manifests, page-level registration signals, and named functional surfaces such as cart, checkout, search, filter, sort, login, and booking controls.
+- **Accessibility Trees**: checks whether form controls and clickable components expose precise accessible names through labels, text, ARIA, titles, or placeholders.
+- **Semantic Data Formatting**: checks machine-readable discovery files including `/llms.txt`, `/robots.txt`, `/sitemap.xml`, and `/.well-known/ai-plugin.json`.
+- **Layout Stability**: checks observed cumulative layout shift and whether interactive controls move after page load.
+
+### New agentic output files
+
+- `agentic-lighthouse-scores.csv`
+- `agentic-lighthouse-report.json`
+
+The summary report includes overall and per-category averages, and the ticket backlog includes agent-readiness tickets for category scores below 90.
+
+
 ## Output
 
 Each run writes to a **site-name + timestamp folder** so reports are easy to identify later:
@@ -231,8 +274,31 @@ reports/
     a11y-summary-google-doc.md
     a11y-github-tickets.csv
     a11y-image-alts.csv
+    agentic-lighthouse-scores.csv
+    agentic-lighthouse-report.json
   latest
 ```
+
+### Output file reference
+
+- `urls.txt`: URL list used for the run.
+- `a11y-violations.csv`: one row per violating axe node, with impact, priority, importance, WCAG refs, ownership hints, and recommendations.
+- `a11y-report.json`: full per-page JSON scan results, including axe results and Agentic Lighthouse page details.
+- `a11y-run-metadata.json`: run timing, page counts, axe rollups, and agentic scoring rollups.
+- `a11y-summary-google-doc.md`: paste-ready executive summary with WCAG findings and Agentic Lighthouse averages.
+- `a11y-github-tickets.csv`: backlog-ready tickets for global accessibility issues, page-level accessibility issues, and low agentic category scores.
+- `a11y-image-alts.csv`: image alt-text inventory with readability ratings and suggested review notes.
+- `agentic-lighthouse-scores.csv`: per-page, per-category agent-readiness scores with findings, evidence, priority, importance, and recommendations.
+- `agentic-lighthouse-report.json`: structured Agentic Lighthouse scoring details for every scored page.
+- `latest`: text pointer containing the latest run ID.
+
+### Agentic score thresholds
+
+- `90-100`: pass
+- `70-89`: needs review
+- `0-69`: fail
+
+Agentic tickets are generated for category scores below `90`.
 
 ---
 
@@ -281,10 +347,39 @@ See **PUBLISHING.md** for the exact release steps.
 
 ## Commands reference
 
-Standard audit:
+### Installed CLI commands
+
+```bash
+universal-a11y-audit help
+universal-a11y-audit version
+universal-a11y-audit audit --site https://www.example.com
+universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
+universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
+universal-a11y-audit report --run-dir ./reports/<run-id>
+universal-a11y-audit tickets --run-dir ./reports/<run-id>
+universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
+```
+
+The shorter alias works the same way:
+
+```bash
+uaaudit audit --site https://www.example.com
+```
+
+### Source commands
+
+Full audit:
 
 ```bash
 node scripts/run-audit.mjs --site https://www.example.com
+```
+
+Full audit with explicit output folder:
+
+```bash
+node scripts/run-audit.mjs \
+  --site https://www.example.com \
+  --out-dir ./reports
 ```
 
 Protected-site slow mode:
@@ -317,6 +412,40 @@ node scripts/build-urls-from-sitemap.mjs \
   --out ./reports/<run-id>/urls.txt
 ```
 
+Scan an existing URL list:
+
+```bash
+node scripts/a11y-audit.mjs \
+  --urls-file ./reports/<run-id>/urls.txt \
+  --out-dir ./reports \
+  --run-id <run-id>
+```
+
+Scan by crawling from a start URL:
+
+```bash
+node scripts/a11y-audit.mjs \
+  --crawl \
+  --start https://www.example.com \
+  --max-pages 50 \
+  --out-dir ./reports
+```
+
+Generate only the Markdown summary:
+
+```bash
+node scripts/generate-google-doc-report.mjs \
+  --run-dir ./reports/<run-id> \
+  --site https://www.example.com
+```
+
+Generate only the ticket/backlog CSV:
+
+```bash
+node scripts/generate-ticket-csv.mjs \
+  --run-dir ./reports/<run-id>
+```
+
 Convert browser-saved sitemap XML into `urls.txt`:
 
 ```bash
@@ -325,13 +454,38 @@ node scripts/convert-sitemap-xml-to-urls.mjs \
   --out ./reports/<run-id>/urls.txt
 ```
 
+### Common options
+
+- `--site`: site origin to discover and audit.
+- `--sitemap-url`: explicit sitemap URL when auto-discovery is not enough.
+- `--urls-file`: use an existing URL list instead of building one from a sitemap.
+- `--out-dir`: base output folder, defaults to `reports`.
+- `--run-id`: explicit run folder name.
+- `--batch-size`: cap the number of URLs scanned in one run.
+- `--slow`: use more conservative navigation timing and retries.
+- `--respect-robots`: respect `robots.txt` disallow rules during URL filtering/crawling.
+- `--cloudflare-aware`: detect likely Cloudflare/WAF challenge pages and back off.
+- `--retries`: override navigation retry count.
+- `--backoff-ms`: override retry backoff timing.
+- `--crawl-delay-ms`: add delay between scanned pages.
+- `--no-tickets`: skip ticket CSV generation in the full `audit` workflow.
+- `--http-username` / `--http-password`: HTTP Basic Auth credentials.
+- `--auth-config`: local form-login config file.
+
+### npm scripts
+
+```bash
+npm run audit
+npm run audit:crawl
+npm run audit:urls
+npm run audit:slow
+npm run build:urls
+npm run report
+npm run sitemap:xml-to-urls
+npm run pack:check
+```
+
 ---
-
-## License
-
-MIT
-
-
 
 ## Long-running scans, warnings, and progress indicators
 
@@ -389,3 +543,9 @@ node scripts/run-audit.mjs \
 ```
 
 > Fix note: run folders now consistently use `site-name + timestamp`, for example `example.com-20260307-094546`.
+
+---
+
+## License
+
+MIT

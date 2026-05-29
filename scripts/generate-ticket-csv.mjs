@@ -68,19 +68,26 @@ const priorityRank = { "P0-Critical": 0, "P1-High": 1, "P2-Medium": 2, "P3-Low":
 const importanceRank = { "Highest": 0, "High": 1, "Medium": 2, "Low": 3 };
 
 function titleFor(t) {
+  if (t.ticket_type === "Agentic") return `[AGENTIC][${t.priority}] Improve ${t.rule_id.replace(/^agentic:/, "").replace(/_/g, " ")} on ${pagePathForTitle(t.page_url)}`;
   if (t.ticket_type === "Global") return `[A11Y][${t.priority}] Fix ${t.rule_id} across site`;
+  return `[A11Y][${t.priority}] Fix ${t.rule_id} on ${pagePathForTitle(t.page_url)}`;
+}
+
+function pagePathForTitle(pageUrl) {
   let pathPart = "";
   try {
-    const u = new URL(t.page_url);
+    const u = new URL(pageUrl);
     pathPart = u.pathname && u.pathname !== "/" ? u.pathname : "/";
   } catch {
-    pathPart = t.page_url;
+    pathPart = pageUrl;
   }
-  return `[A11Y][${t.priority}] Fix ${t.rule_id} on ${pathPart}`;
+  return pathPart;
 }
 
 function labelsFor(t) {
-  const parts = ["accessibility", "wcag", `priority:${t.priority.toLowerCase()}`];
+  const parts = t.ticket_type === "Agentic"
+    ? ["agent-readiness", "lighthouse-scoring", `priority:${t.priority.toLowerCase()}`]
+    : ["accessibility", "wcag", `priority:${t.priority.toLowerCase()}`];
   if (t.ticket_type === "Global") parts.push("global");
   if (t.likely_out_of_control === "yes") parts.push("third-party-review");
   return parts.join(", ");
@@ -135,6 +142,10 @@ function main() {
   }
 
   const rows = parseCsv(fs.readFileSync(violationsPath, "utf8")).filter((r) => r.rule_id && r.rule_id !== "page_error");
+  const agenticPath = path.join(runDir, "agentic-lighthouse-scores.csv");
+  const agenticRows = fs.existsSync(agenticPath)
+    ? parseCsv(fs.readFileSync(agenticPath, "utf8")).filter((r) => r.category && Number(r.category_score) < 90)
+    : [];
 
   const rulePages = new Map(), ruleCounts = new Map(), rulePriority = new Map(), ruleImpact = new Map(), ruleImportance = new Map();
   const ruleWcag = new Map(), ruleSelectors = new Map(), ruleControl = new Map();
@@ -272,7 +283,37 @@ function main() {
     t.ticket_labels = labelsFor(t);
   }
 
-  const allTickets = [...globalKeyed.values(), ...pageKeyed.values()].sort((a, b) => {
+  const agenticTickets = agenticRows.map((r) => {
+    const score = Number(r.category_score || 0);
+    const t = {
+      ticket_type: "Agentic",
+      priority: r.priority || (score < 50 ? "P1-High" : score < 70 ? "P2-Medium" : "P3-Low"),
+      importance: r.importance || (score < 50 ? "High" : score < 70 ? "Medium" : "Low"),
+      rule_id: `agentic:${r.category}`,
+      page_url: r.page_url,
+      impact: r.category_status || "",
+      wcag_refs: "",
+      pages_affected: 1,
+      violation_nodes: 1,
+      example_pages: [r.page_url].filter(Boolean),
+      example_selectors: [],
+      likely_out_of_control: "no",
+      control_notes: "",
+      rule_evidence_url: sheetFilterUrl(sheetId, sheetGid, "category", r.category),
+      page_evidence_url: sheetFilterUrl(sheetId, sheetGid, "page_url", r.page_url),
+      priority_evidence_url: sheetFilterUrl(sheetId, sheetGid, "priority", r.priority || ""),
+      ticket_description: "",
+      ticket_title: "",
+      ticket_labels: "",
+      ticket_notes: `Agentic Lighthouse score: ${score}/100. Findings: ${r.findings || "Review detailed evidence in agentic-lighthouse-scores.csv."} Recommended action: ${r.recommendation || "Improve this page's agent-readiness signals."}`,
+    };
+    t.ticket_description = descriptionFor(t);
+    t.ticket_title = titleFor(t);
+    t.ticket_labels = labelsFor(t);
+    return t;
+  });
+
+  const allTickets = [...globalKeyed.values(), ...pageKeyed.values(), ...agenticTickets].sort((a, b) => {
     if (a.ticket_type !== b.ticket_type) return a.ticket_type === "Global" ? -1 : 1;
     return (priorityRank[a.priority] ?? 99) - (priorityRank[b.priority] ?? 99);
   });
