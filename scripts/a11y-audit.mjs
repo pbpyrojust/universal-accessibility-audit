@@ -43,6 +43,54 @@ function decodeUrlForDisplay(u) {
   try { return decodeURI(String(u || "")); } catch { return String(u || ""); }
 }
 
+const c = {
+  reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m', italic: '\x1b[3m',
+  red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', blue: '\x1b[34m',
+  magenta: '\x1b[35m', cyan: '\x1b[36m', white: '\x1b[37m',
+  bgRed: '\x1b[41m', bgGreen: '\x1b[42m', bgYellow: '\x1b[43m', bgBlue: '\x1b[44m',
+  bgMagenta: '\x1b[45m', bgCyan: '\x1b[46m',
+  brightRed: '\x1b[91m', brightGreen: '\x1b[92m', brightYellow: '\x1b[93m',
+  brightBlue: '\x1b[94m', brightMagenta: '\x1b[95m', brightCyan: '\x1b[96m',
+};
+const rainbowColors = [c.brightRed, c.brightYellow, c.brightGreen, c.brightCyan, c.brightBlue, c.brightMagenta];
+function rainbow(text) {
+  return [...text].map((ch, i) => ch === ' ' ? ch : `${rainbowColors[i % rainbowColors.length]}${ch}`).join('') + c.reset;
+}
+function rainbowBar(filled, empty) {
+  const chars = [];
+  for (let i = 0; i < filled; i++) {
+    chars.push(`${rainbowColors[i % rainbowColors.length]}█`);
+  }
+  return chars.join('') + `${c.dim}${'░'.repeat(empty)}${c.reset}`;
+}
+const spinnerFrames = ['◐', '◓', '◑', '◒'];
+let spinnerIdx = 0;
+function spinner() { return rainbowColors[spinnerIdx % rainbowColors.length] + spinnerFrames[spinnerIdx++ % spinnerFrames.length] + c.reset; }
+function progressLine(current, total, label, extra = '') {
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  const barWidth = 30;
+  const filled = total > 0 ? Math.round((current / total) * barWidth) : 0;
+  const bar = rainbowBar(filled, barWidth - filled);
+  const pctStr = pct === 100 ? `${c.brightGreen}${pct}%${c.reset}` : `${c.brightCyan}${pct}%${c.reset}`;
+  const spin = current < total ? spinner() : `${c.brightGreen}✔${c.reset}`;
+  process.stdout.write(`\r  ${spin} ${bar} ${c.bold}${current}${c.reset}${c.dim}/${total}${c.reset} ${pctStr} ${c.dim}${label}${c.reset}${extra ? ' ' + extra : ''}`.padEnd(160) + '\r');
+}
+function phaseHeader(label, icon = '▸') {
+  console.log('');
+  console.log(`  ${rainbow(icon)} ${c.bold}${c.brightCyan}${label}${c.reset} ${c.dim}${'─'.repeat(Math.max(0, 52 - label.length))}${c.reset}`);
+}
+function phaseDone(label, elapsed) {
+  console.log(`    ${c.brightGreen}✔${c.reset} ${label} ${c.dim}in${c.reset} ${c.brightYellow}${formatDuration(elapsed)}${c.reset}`);
+}
+function statusMsg(icon, color, msg) {
+  console.log(`    ${color}${icon}${c.reset} ${msg}`);
+}
+function severityColor(count, threshold = 0) {
+  if (count === 0) return `${c.brightGreen}${count}${c.reset}`;
+  if (count > threshold) return `${c.brightRed}${count}${c.reset}`;
+  return `${c.brightYellow}${count}${c.reset}`;
+}
+
 function loadUrlsFromFile(filePath) {
   return fs.readFileSync(filePath, "utf8")
     .split(/\r?\n/g)
@@ -217,7 +265,7 @@ function getAuthSettings(args) {
 
 async function maybePerformFormLogin(page, formAuth, slowMode = false) {
   if (!formAuth) return false;
-  console.log(`ℹ Attempting form login at ${formAuth.loginUrl}`);
+  console.log(`    ${c.brightMagenta}🔐${c.reset} Attempting form login at ${c.bold}${formAuth.loginUrl}${c.reset}`);
   await page.goto(formAuth.loginUrl, { waitUntil: slowMode ? "domcontentloaded" : "networkidle", timeout: 90000 });
   await page.locator(formAuth.usernameSelector).first().fill(formAuth.username);
   await page.locator(formAuth.passwordSelector).first().fill(formAuth.password || "");
@@ -235,17 +283,17 @@ async function maybePerformFormLogin(page, formAuth, slowMode = false) {
   } else {
     await page.waitForTimeout(formAuth.postLoginWaitMs || 2000);
   }
-  console.log("ℹ Form login step completed.");
+  console.log(`    ${c.brightGreen}✔${c.reset} Form login completed.`);
   return true;
 }
 
 function formatDuration(ms) {
-  const sec = Math.max(0, ms / 1000);
-  if (sec < 90) return `${sec.toFixed(1)}s`;
-  const min = sec / 60;
-  if (min < 90) return `${min.toFixed(1)}m`;
-  const hr = min / 60;
-  return `${hr.toFixed(2)}h`;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
 }
 
 function formatElapsed(startedAt) {
@@ -292,27 +340,24 @@ function estimateRemaining(completedDurations, completedCount, totalCount) {
 function createHeartbeat(label, intervalMs = 10000, etaLabel = "") {
   const started = Date.now();
   const timer = setInterval(() => {
-    process.stdout.write(`   … still working on ${label} | elapsed ${formatElapsed(started)}${etaLabel ? ` | ${etaLabel}` : ""}\n`);
+    const spin = spinner();
+    process.stdout.write(`    ${spin} ${c.dim}still working on${c.reset} ${label} ${c.dim}|${c.reset} ${c.brightYellow}${formatElapsed(started)}${c.reset}${etaLabel ? ` ${c.dim}|${c.reset} ${etaLabel}` : ""}\n`);
   }, intervalMs);
   return () => clearInterval(timer);
 }
 
 function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize = 0, hasAuth = false }) {
-  if (urlCount >= 100) console.log(`ℹ Large scan detected (${urlCount} pages). This may take a while.`);
-  if (urlCount >= 500) console.log("⚠ Very large scan. Consider smaller batches if the site is sensitive or rate-limited.");
-  if (batchSize > 0) console.log(`ℹ Small-batch mode enabled (${batchSize} page max for this run).`);
-  if (hasAuth) console.log("ℹ Authenticated mode enabled for protected/staging/dev sites.");
-  if (slowMode) {
-    console.log("ℹ Running in --slow mode (conservative scan: longer delays + retries).");
-    console.log("ℹ Slow/protected-site scans can take significantly longer than normal runs.");
-  }
-  if (cfAware) {
-    console.log("ℹ Cloudflare-aware challenge detection enabled (--cloudflare-aware).");
-    console.log("ℹ Challenge pages, retries, and backoff can make scans look quiet for a while. Heartbeat lines will show progress.");
-  }
-  if (crawlDelayMs > 0) console.log(`ℹ Using crawl delay: ${Math.ceil(crawlDelayMs/1000)}s between pages.`);
-  if (retries > 1 || backoffMs >= 5000) console.log(`ℹ Retry policy: ${retries} retries, base backoff ${Math.ceil(backoffMs/1000)}s.`);
-  if (hasAuth) console.log("ℹ Auth enabled for this run.");
+  const estPerPage = slowMode ? 15000 : 8000;
+  const estTotal = urlCount * estPerPage;
+  statusMsg('⏱️', c.brightMagenta, `Estimated: ${c.bold}~${formatDuration(estTotal)}${c.reset} ${c.dim}(${urlCount} pages${slowMode ? ', slow mode' : ''})${c.reset}`);
+  if (urlCount >= 100) statusMsg('📋', c.brightYellow, `Large scan detected (${c.bold}${urlCount}${c.reset}${c.brightYellow} pages). This may take a while.${c.reset}`);
+  if (urlCount >= 500) statusMsg('⚠', c.brightRed, `Very large scan. Consider smaller batches if the site is sensitive or rate-limited.`);
+  if (batchSize > 0) statusMsg('📦', c.cyan, `Small-batch mode enabled (${c.bold}${batchSize}${c.reset} page max for this run).`);
+  if (hasAuth) statusMsg('🔐', c.brightMagenta, `Authenticated mode enabled for protected/staging/dev sites.`);
+  if (slowMode) statusMsg('🐢', c.brightYellow, `Running in ${c.bold}--slow${c.reset}${c.brightYellow} mode (conservative timing + retries).${c.reset}`);
+  if (cfAware) statusMsg('🛡️', c.brightYellow, `Cloudflare-aware detection enabled. Heartbeat lines will show progress.`);
+  if (crawlDelayMs > 0) statusMsg('⏳', c.cyan, `Crawl delay: ${c.bold}${Math.ceil(crawlDelayMs/1000)}s${c.reset} between pages.`);
+  if (retries > 1 || backoffMs >= 5000) statusMsg('🔄', c.cyan, `Retry policy: ${c.bold}${retries}${c.reset} retries, ${c.bold}${Math.ceil(backoffMs/1000)}s${c.reset} base backoff.`);
 }
 
 function mapImpactToPriority(impact) {
@@ -422,7 +467,7 @@ async function gotoWithRetry(page, url, opts = {}) {
         lastErr = new Error(`bot_protection:${bot.type}`);
         if (attempt < retries) {
           const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
-          console.warn(`   ⚠ Bot protection detected (${bot.type}, status ${bot.status}). Backing off ${Math.ceil(delay/1000)}s then retrying...`);
+          console.warn(`    ${c.brightYellow}⚠${c.reset} Bot protection detected ${c.dim}(${bot.type}, status ${bot.status})${c.reset}. Backing off ${c.bold}${Math.ceil(delay/1000)}s${c.reset}...`);
           await sleep(delay);
           continue;
         }
@@ -434,7 +479,7 @@ async function gotoWithRetry(page, url, opts = {}) {
       lastErr = e;
       if (attempt < retries) {
         const delay = backoffMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
-        console.warn(`   ⚠ Navigation failed (${String(e?.message || e)}). Backing off ${Math.ceil(delay/1000)}s then retrying...`);
+        console.warn(`    ${c.brightYellow}⚠${c.reset} Navigation failed ${c.dim}(${String(e?.message || e).slice(0, 60)})${c.reset}. Backing off ${c.bold}${Math.ceil(delay/1000)}s${c.reset}...`);
         await sleep(delay);
       }
     }
@@ -737,12 +782,22 @@ async function main() {
   const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
   const hasAuth = Boolean(args["http-username"] || args["http-password"] || args["login-url"] || args["username"] || args["password"] || args["auth-config"] || process.env.A11Y_HTTP_USERNAME || process.env.A11Y_HTTP_PASSWORD || process.env.A11Y_LOGIN_USERNAME || process.env.A11Y_LOGIN_PASSWORD);
 
-  if (respectRobots) console.log("ℹ Respecting robots.txt Disallow rules (--respect-robots).");
-  if (auth.httpCredentials) console.log("ℹ HTTP/basic auth credentials configured for this run.");
-  if (auth.formAuth) console.log("ℹ Form-login auth config detected for this run.");
+  console.log('');
+  console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
+  console.log(`  ${rainbow('║')}  ${c.bold}${c.brightCyan}♿ Universal Accessibility Audit${c.reset}                       ${rainbow('║')}`);
+  console.log(`  ${rainbow('║')}  ${c.dim}WCAG · axe-core · Agentic Lighthouse · Alt Text${c.reset}        ${rainbow('║')}`);
+  console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
+  console.log('');
 
+  if (respectRobots) statusMsg('🤖', c.cyan, `Respecting ${c.bold}robots.txt${c.reset} Disallow rules.`);
+  if (auth.httpCredentials) statusMsg('🔑', c.brightMagenta, `HTTP/basic auth credentials configured.`);
+  if (auth.formAuth) statusMsg('🔐', c.brightMagenta, `Form-login auth config detected.`);
+
+  phaseHeader('URL Discovery', '🗺️');
+  const discoveryStart = Date.now();
   let urls = [];
   if (args.crawl) {
+    statusMsg('🕷️', c.cyan, 'Browser crawl mode');
     const browser = await chromium.launch({ headless: true });
     const crawlContextOptions = {};
     if (auth.httpCredentials) crawlContextOptions.httpCredentials = auth.httpCredentials;
@@ -753,19 +808,30 @@ async function main() {
     }
     urls = await crawlInternalLinks(page, startUrl, maxPages, { isAllowedUrl: robotsCfg.isAllowedUrl, slow: slowMode, crawlDelayMs });
     await browser.close();
+    statusMsg('🌐', c.brightGreen, `Crawled ${c.bold}${urls.length}${c.reset} URL(s)`);
   } else if (args["urls-file"]) {
     urls = loadUrlsFromFile(path.resolve(process.cwd(), args["urls-file"]));
     if (robotsCfg.isAllowedUrl) urls = urls.filter((u) => robotsCfg.isAllowedUrl(u));
+    statusMsg('📄', c.cyan, `URL file: ${c.bold}${args["urls-file"]}${c.reset} ${c.dim}(${urls.length} URLs)${c.reset}`);
   } else {
     urls = [startUrl];
+    statusMsg('🎯', c.cyan, `Single URL: ${c.bold}${startUrl}${c.reset}`);
   }
 
   if (batchSize > 0 && urls.length > batchSize) {
     urls = urls.slice(0, batchSize);
   }
+  phaseDone('URLs ready', Date.now() - discoveryStart);
 
+  phaseHeader('Scan Configuration', '⚙️');
+  console.log(`  ${c.brightMagenta}🎯${c.reset} ${c.bold}Start URL:${c.reset}  ${c.brightCyan}${startUrl}${c.reset}`);
+  console.log(`  ${c.brightMagenta}📄${c.reset} ${c.bold}Pages:${c.reset}      ${c.brightGreen}${urls.length}${c.reset}`);
+  console.log(`  ${c.brightMagenta}📁${c.reset} ${c.bold}Output:${c.reset}     ${c.dim}${outDir}${c.reset}`);
   printStartupAdvisories({ urlCount: urls.length, slowMode, cfAware, crawlDelayMs, retries, backoffMs, batchSize, hasAuth: Boolean(auth.httpCredentials || auth.formAuth) });
 
+  phaseHeader('Page Scanning', '🔍');
+  const scanStart = Date.now();
+  statusMsg('◐', c.cyan, 'Launching headless browser...');
   const browser = await chromium.launch({ headless: true });
   const contextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)" };
   if (auth.httpCredentials) contextOptions.httpCredentials = auth.httpCredentials;
@@ -774,6 +840,8 @@ async function main() {
   if (auth.formAuth) {
     await maybePerformFormLogin(page, auth.formAuth, slowMode);
   }
+  phaseDone('Browser ready', Date.now() - scanStart);
+  console.log('');
 
   const siteResults = [];
   const csvRows = [];
@@ -794,7 +862,9 @@ async function main() {
     const idx = i + 1;
     const pageStart = Date.now();
     const etaBefore = estimateRemaining(completedDurations, i, urls.length);
-    console.log(`[${idx}/${urls.length}] Scanning: ${decodeUrlForDisplay(url)} | ETA remaining: ${etaBefore}`);
+    const shortUrl = decodeUrlForDisplay(url).length > 55 ? decodeUrlForDisplay(url).slice(0, 52) + '...' : decodeUrlForDisplay(url);
+    progressLine(idx, urls.length, shortUrl, `${c.dim}ETA:${c.reset} ${c.brightYellow}~${etaBefore}${c.reset}`);
+    console.log('');
     const pageResult = { url, ok: true, error: null, axe: null, timestamp: new Date().toISOString() };
 
     try {
@@ -824,7 +894,7 @@ async function main() {
           });
         }
       } catch (e) {
-        console.warn(`   ↳ Agentic scoring skipped for ${url}: ${String(e?.message || e)}`);
+        console.warn(`    ${c.brightYellow}⚠${c.reset} Agentic scoring skipped ${c.dim}(${String(e?.message || e).slice(0, 60)})${c.reset}`);
       }
 
       try {
@@ -862,10 +932,10 @@ async function main() {
           });
         }
       } catch (e) {
-        console.warn(`   ↳ Alt report skipped for ${url}: ${String(e?.message || e)}`);
+        console.warn(`    ${c.brightYellow}⚠${c.reset} Alt report skipped ${c.dim}(${String(e?.message || e).slice(0, 60)})${c.reset}`);
       }
 
-      const stopAxeHeartbeat = createHeartbeat(`${decodeUrlForDisplay(url)} (axe analysis)`, 10000, `ETA remaining: ${estimateRemaining(completedDurations, i, urls.length)}`);
+      const stopAxeHeartbeat = createHeartbeat(`${c.dim}${decodeUrlForDisplay(url)}${c.reset} ${c.brightCyan}(axe analysis)${c.reset}`, 10000, `${c.dim}ETA:${c.reset} ${c.brightYellow}~${estimateRemaining(completedDurations, i, urls.length)}${c.reset}`);
       const axe = await runAxe(page);
       stopAxeHeartbeat();
       pageResult.axe = axe;
@@ -915,7 +985,7 @@ async function main() {
       }
       totalViolationNodes += pageViolationNodes;
       completedDurations.push(Date.now() - pageStart);
-      console.log(`   ↳ Done in ${formatElapsed(pageStart)} | violation nodes: ${pageViolationNodes} | total: ${totalViolationNodes} | elapsed: ${formatElapsed(startedAt)} | ETA remaining: ${estimateRemaining(completedDurations, i + 1, urls.length)}`);
+      console.log(`    ${c.brightGreen}✔${c.reset} Done in ${c.brightYellow}${formatElapsed(pageStart)}${c.reset} ${c.dim}|${c.reset} violations: ${pageViolationNodes > 0 ? c.brightRed : c.brightGreen}${pageViolationNodes}${c.reset} ${c.dim}|${c.reset} total: ${c.bold}${totalViolationNodes}${c.reset} ${c.dim}|${c.reset} elapsed: ${c.brightYellow}${formatElapsed(startedAt)}${c.reset}`);
     } catch (err) {
       pageResult.ok = false;
       pageResult.error = String(err?.message || err);
@@ -945,13 +1015,16 @@ async function main() {
         recommendation: isBot ? "Back off, wait before retrying, and consider smaller batches with --slow --respect-robots --cloudflare-aware." : "Confirm the page is publicly accessible without auth/bot protection. Re-run scan; if persistent, ticket separately.",
       });
       completedDurations.push(Date.now() - pageStart);
-      console.log(`   ↳ ERROR in ${formatElapsed(pageStart)} | elapsed: ${formatElapsed(startedAt)} | ETA remaining: ${estimateRemaining(completedDurations, i + 1, urls.length)}`);
+      console.log(`    ${c.brightRed}✘${c.reset} Error in ${c.brightYellow}${formatElapsed(pageStart)}${c.reset} ${c.dim}|${c.reset} ${c.brightRed}${pageResult.error.slice(0, 80)}${c.reset} ${c.dim}|${c.reset} elapsed: ${c.brightYellow}${formatElapsed(startedAt)}${c.reset}`);
     }
     siteResults.push(pageResult);
   }
 
   await browser.close();
+  phaseDone('Page scanning', Date.now() - scanStart);
 
+  phaseHeader('Writing Reports', '📝');
+  const reportWriteStart = Date.now();
   fs.writeFileSync(path.join(outDir, "a11y-report.json"), JSON.stringify({ runId, scanned: urls, results: siteResults }, null, 2));
   fs.writeFileSync(path.join(outDir, "a11y-violations.csv"), stringify(csvRows, { header: true, columns: [
     "scope","page_url","rule_id","impact","priority","importance","wcag_refs","help","help_url","description","failure_summary","selector_target","html_snippet","is_global_candidate","suggested_github_issue","rule_filter_url","impact_filter_url","page_filter_url","likely_out_of_control","control_notes","recommendation"
@@ -996,10 +1069,24 @@ async function main() {
   fs.writeFileSync(path.join(outDir, "a11y-run-metadata.json"), JSON.stringify(meta, null, 2));
   try { fs.writeFileSync(path.join(baseOutDir, "latest"), runId, "utf8"); } catch {}
 
-  console.log(`Scanned ${urls.length} page(s).`);
-  console.log(`CSV rows (violating nodes): ${meta.violationNodes}`);
-  if (pageErrors) console.log(`Pages with scan errors: ${pageErrors}`);
-  console.log(`Run folder: ${outDir}`);
+  phaseDone('Reports written', Date.now() - reportWriteStart);
+
+  const totalElapsed = Date.now() - startedAt;
+  console.log('');
+  console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
+  console.log(`  ${rainbow('║')}  ${c.bold}${c.brightGreen}✨ Scan Complete!${c.reset}                                     ${rainbow('║')}`);
+  console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
+  console.log('');
+  console.log(`  ${c.brightCyan}📄${c.reset} ${c.bold}Pages${c.reset}         ${c.brightGreen}${urls.length}${c.reset}`);
+  console.log(`  ${c.brightCyan}⚠️${c.reset}  ${c.bold}Violations${c.reset}    ${severityColor(meta.violationNodes, 50)}`);
+  console.log(`  ${c.brightCyan}🖼️${c.reset}  ${c.bold}Images${c.reset}        ${c.brightGreen}${imageAltRows.length}${c.reset} ${c.dim}alt texts audited${c.reset}`);
+  console.log(`  ${c.brightCyan}🤖${c.reset} ${c.bold}Agentic${c.reset}       ${c.brightGreen}${agenticResults.length}${c.reset} ${c.dim}pages scored${c.reset} ${agenticSummary.overallScore >= 0 ? `${c.dim}| avg:${c.reset} ${agenticSummary.overallScore >= 90 ? c.brightGreen : agenticSummary.overallScore >= 70 ? c.brightYellow : c.brightRed}${agenticSummary.overallScore}${c.reset}` : ''}`);
+  if (pageErrors) console.log(`  ${c.brightCyan}❌${c.reset} ${c.bold}Errors${c.reset}        ${c.brightRed}${pageErrors}${c.reset} ${c.dim}pages failed${c.reset}`);
+  console.log(`  ${c.brightCyan}⏱️${c.reset}  ${c.bold}Time${c.reset}          ${c.brightYellow}${formatDuration(totalElapsed)}${c.reset}`);
+  console.log(`  ${c.brightCyan}📁${c.reset} ${c.bold}Output${c.reset}        ${c.dim}${outDir}${c.reset}`);
+  console.log('');
+  console.log(`  ${rainbow('★ ★ ★')} ${c.dim}Happy auditing!${c.reset} ${rainbow('★ ★ ★')}`);
+  console.log('');
 }
 
 main().catch((e) => {

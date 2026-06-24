@@ -92,7 +92,7 @@ switch (command) {
   case "version":
   case "--version":
   case "-v":
-    console.log("0.2.7");
+    console.log("0.2.8");
     break;
   default:
     console.error(`Unknown command: ${command}`);

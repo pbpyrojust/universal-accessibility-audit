@@ -1,61 +1,131 @@
 # Universal Accessibility Audit
 
-**Package:** `@pbpyrojust/universal-accessibility-audit`  
-**CLI commands:** `universal-a11y-audit`, `uaaudit`  
-**Version:** 0.2.7
+**Package:** `@pbpyrojust/universal-accessibility-audit`
+**CLI commands:** `universal-a11y-audit`, `uaaudit`
+**Version:** 0.2.8
 
-A CLI toolkit for accessibility and browser-native AI readiness audits with:
+A CLI toolkit for WCAG accessibility audits and browser-native AI readiness scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs. Built for development, staging, protected, and production sites.
 
-- sitemap discovery for WordPress, Yoast, Drupal, and standard sitemap.xml setups
-- Playwright + axe-core WCAG scanning
+## Features
+
+- Sitemap-first URL discovery with WordPress, Yoast, Drupal, and standard sitemap.xml support
+- Playwright + axe-core WCAG 2.1 Level AA scanning
 - Agentic Lighthouse-style scoring for browser-native AI readiness
-- manual browser-saved sitemap XML fallback for protected sites
-- CSV, JSON, Markdown, and backlog/ticket-ready outputs with importance and likely out-of-control flags
-- image alt text inventory reporting
+- Image alt text inventory with readability ratings
+- Manual browser-saved sitemap XML fallback for protected sites
+- CSV, JSON, Markdown, and backlog/ticket-ready outputs with importance and out-of-control flags
 - WebMCP Protocol, Accessibility Trees, Semantic Data Formatting, and Layout Stability scoring
+- Support for HTTP Basic Auth and form-login protected sites
 
-This repo works in two ways:
+## Requirements
 
-1. **Clone and run directly from source**
-2. **Install and run as an npm CLI package**
+- Node.js 20+
+- pnpm (recommended) or npm
+- Playwright Chromium
 
----
-
-## Clone and run from source
+## Installation
 
 ```bash
-git clone https://github.com/pbpyrojust/universal-accessibility-audit.git
-cd universal-accessibility-audit
-npm install
-npx playwright install --with-deps chromium
-node scripts/run-audit.mjs --site https://www.example.com
+pnpm install
+pnpm exec playwright install --with-deps chromium
 ```
 
----
+Or with npm:
+
+```bash
+npm install
+npx playwright install --with-deps chromium
+```
 
 ## Install from npm
 
 ```bash
 npm install -g @pbpyrojust/universal-accessibility-audit
 npx playwright install --with-deps chromium
-universal-a11y-audit audit --site https://www.example.com
 ```
 
-You can also use the shorter alias:
+## Quick start
+
+Run a full audit:
 
 ```bash
+node scripts/run-audit.mjs --site https://www.example.com
+```
+
+Or use the pnpm shortcut:
+
+```bash
+pnpm audit --site https://www.example.com
+```
+
+Or use the installed CLI:
+
+```bash
+universal-a11y-audit audit --site https://www.example.com
 uaaudit audit --site https://www.example.com
 ```
 
----
+## Main audit command
 
+```bash
+node scripts/run-audit.mjs --site <url> [options]
+```
 
-## Password-protected, staging, and development sites
+### Options
 
-The tool can also run against protected sites in two common ways:
+| Flag | Description |
+|------|-------------|
+| `--site <url>` | **(required)** Target website URL |
+| `--sitemap-url <url>` | Use a specific sitemap URL when auto-discovery is not enough |
+| `--urls-file <path>` | Provide a text file of URLs to audit (one per line) |
+| `--out-dir <path>` | Base output folder (default: `reports`) |
+| `--run-id <id>` | Explicit run folder name |
+| `--batch-size <n>` | Cap the number of URLs scanned in one run |
+| `--slow` | Use more conservative navigation timing and retries |
+| `--respect-robots` | Respect `robots.txt` disallow rules during URL filtering/crawling |
+| `--cloudflare-aware` | Detect likely Cloudflare/WAF challenge pages and back off |
+| `--retries <n>` | Override navigation retry count |
+| `--backoff-ms <ms>` | Override retry backoff timing |
+| `--crawl-delay-ms <ms>` | Add delay between scanned pages |
+| `--no-tickets` | Skip ticket CSV generation in the full audit workflow |
+| `--sheet-url <url>` | Google Sheet URL for filter link generation |
+| `--include-path <filter>` | Include only URLs matching this path filter |
+| `--exclude-path <filter>` | Exclude URLs matching this path filter |
+| `--include-sitemaps <filter>` | Comma-separated filters for sitemap index entries |
+| `--include-all-sitemaps` | Include all sitemaps from the sitemap index |
 
-### 1. HTTP / Basic Auth
-For environments protected by browser-native username/password auth:
+### Examples
+
+```bash
+# Full sitemap-based audit
+node scripts/run-audit.mjs --site https://www.example.com
+
+# Protected-site conservative scan
+node scripts/run-audit.mjs --site https://www.example.com --slow --respect-robots --cloudflare-aware
+
+# Small-batch audit from a manual URL list
+node scripts/run-audit.mjs --site https://www.example.com --urls-file ./reports/manual-urls.txt --batch-size 10
+
+# Audit with HTTP Basic Auth
+node scripts/run-audit.mjs --site https://staging.example.com --http-username myuser --http-password mypass
+
+# Audit with form login
+node scripts/run-audit.mjs --site https://staging.example.com --auth-config ./auth.local.json
+
+# Explicit output folder
+node scripts/run-audit.mjs --site https://www.example.com --out-dir ./reports
+```
+
+## Authentication for protected sites
+
+For staging or password-protected sites, the tool supports two auth methods.
+
+### HTTP / Basic Auth
+
+| Flag | Description |
+|------|-------------|
+| `--http-username <user>` | HTTP Basic Auth username |
+| `--http-password <pass>` | HTTP Basic Auth password |
 
 ```bash
 node scripts/run-audit.mjs \
@@ -64,28 +134,21 @@ node scripts/run-audit.mjs \
   --http-password your-pass
 ```
 
-You can combine that with other flags:
+### Form login via auth config
 
-```bash
-node scripts/run-audit.mjs \
-  --site https://staging.example.com \
-  --http-username your-user \
-  --http-password your-pass \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware
-```
+| Flag | Description |
+|------|-------------|
+| `--auth-config <path>` | Path to a local form-login config JSON file |
+| `--login-url <url>` | Override the login URL |
+| `--username <user>` | Override the username |
+| `--password <pass>` | Override the password |
+| `--username-selector <sel>` | Override the username input selector |
+| `--password-selector <sel>` | Override the password input selector |
+| `--submit-selector <sel>` | Override the submit button selector |
+| `--ready-selector <sel>` | Override the post-login ready selector |
+| `--post-login-wait-ms <ms>` | Override post-login wait time |
 
-### 2. Form login via local auth config
-For sites that require a login form, use a local auth config file:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://staging.example.com \
-  --auth-config ./auth.local.json
-```
-
-Example `auth.local.json`:
+Create an auth config from `auth-config.example.json`:
 
 ```json
 {
@@ -100,26 +163,16 @@ Example `auth.local.json`:
 }
 ```
 
-You can also override parts of the config with flags:
-
-- `--login-url`
-- `--username`
-- `--password`
-- `--username-selector`
-- `--password-selector`
-- `--submit-selector`
-- `--ready-selector`
-- `--post-login-wait-ms`
-
 ### Environment variables
-Instead of putting secrets directly on the command line, you can use environment variables:
+
+Instead of putting secrets on the command line:
 
 ```bash
 export A11Y_HTTP_USERNAME=your-user
 export A11Y_HTTP_PASSWORD=your-pass
 ```
 
-or for form login:
+Or for form login:
 
 ```bash
 export A11Y_LOGIN_USERNAME=your-user
@@ -127,142 +180,13 @@ export A11Y_LOGIN_PASSWORD=your-pass
 ```
 
 ### Important security note
-Do **not** commit real auth config files, credentials, or environment files.  
-The project now ignores local auth files such as:
 
-- `*.auth.json`
-- `auth.local.json`
-- `.auth.local.json`
-- `.a11y-auth.local.json`
+Do **not** commit real auth config files, credentials, or environment files.
+The project ignores local auth files such as `*.auth.json`, `auth.local.json`, `.auth.local.json`, and `.a11y-auth.local.json`.
 
-Use the committed `auth-config.example.json` file only as a template.
+## Output files
 
-
-## Requirements
-
-- Node.js 20+ recommended for local use
-- Chromium installed for Playwright scans
-
-Install dependencies:
-
-```bash
-npm install
-npx playwright install --with-deps chromium
-```
-
-If Playwright later reports a missing browser, run:
-
-```bash
-npx playwright install
-```
-
----
-
-## Quick start
-
-### Standard site audit
-
-```bash
-node scripts/run-audit.mjs --site https://www.example.com
-```
-
-Installed CLI equivalent:
-
-```bash
-universal-a11y-audit audit --site https://www.example.com
-```
-
-### Protected-site conservative audit
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware
-```
-
-### Small-batch protected-site audit
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./reports/manual-urls.txt \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware \
-  --batch-size 10
-```
-
----
-
-## What a full audit runs
-
-The `audit` workflow runs four steps:
-
-1. Discover URLs from the sitemap, unless `--urls-file` is provided.
-2. Scan pages with Playwright, axe-core, image-alt inventory, and Agentic Lighthouse scoring.
-3. Generate a Google Docs-ready Markdown summary.
-4. Generate a GitHub/backlog-ready ticket CSV, unless `--no-tickets` is used.
-
-The scan is intentionally two-layered:
-
-- **WCAG/axe layer**: finds accessibility violations and affected DOM nodes.
-- **Agentic Lighthouse layer**: scores how well AI/browser agents can understand, call, and safely operate functional page surfaces.
-
----
-
-
-## Importance and out-of-control flags
-
-Violation output now includes an **importance** field in addition to impact/priority. This is intended to help triage what should be handled first in a ticketing or project-management system.
-
-The scan also attempts to flag issues that are **likely out of direct control**, especially when they appear to be inside:
-
-- iframes
-- embedded media players
-- third-party widgets
-- externally hosted embeds
-
-### New violation output fields
-
-- `importance`
-- `likely_out_of_control`
-- `control_notes`
-
-### New ticket/backlog fields
-
-- `importance`
-- `likely_out_of_control`
-- `control_notes`
-- `ticket_notes`
-
-### Important note
-The out-of-control detection is a **best-effort heuristic**. It is designed to surface likely iframe/embed issues for manual review, not to make a perfect ownership decision automatically.
-
-
-## Agentic Lighthouse scoring
-
-Each scan now includes an additional agent-readiness score modeled after Lighthouse-style category scoring. This score is separate from axe/WCAG violations and is designed to show how well browser-native AI agents and software test harnesses can understand and safely operate the site.
-
-### Categories
-
-- **WebMCP Protocol**: checks for WebMCP-style manifests, page-level registration signals, and named functional surfaces such as cart, checkout, search, filter, sort, login, and booking controls.
-- **Accessibility Trees**: checks whether form controls and clickable components expose precise accessible names through labels, text, ARIA, titles, or placeholders.
-- **Semantic Data Formatting**: checks machine-readable discovery files including `/llms.txt`, `/robots.txt`, `/sitemap.xml`, and `/.well-known/ai-plugin.json`.
-- **Layout Stability**: checks observed cumulative layout shift and whether interactive controls move after page load.
-
-### New agentic output files
-
-- `agentic-lighthouse-scores.csv`
-- `agentic-lighthouse-report.json`
-
-The summary report includes overall and per-category averages, and the ticket backlog includes agent-readiness tickets for category scores below 90.
-
-
-## Output
-
-Each run writes to a **site-name + timestamp folder** so reports are easy to identify later:
+Each audit run creates a timestamped folder under `reports/`:
 
 ```text
 reports/
@@ -279,45 +203,163 @@ reports/
   latest
 ```
 
-### Output file reference
+| File | Description |
+|------|-------------|
+| `urls.txt` | URL list used for the run |
+| `a11y-violations.csv` | One row per violating axe node with impact, priority, importance, WCAG refs, ownership hints |
+| `a11y-report.json` | Full per-page JSON scan results including axe results and Agentic Lighthouse page details |
+| `a11y-run-metadata.json` | Run timing, page counts, axe rollups, and agentic scoring rollups |
+| `a11y-summary-google-doc.md` | Paste-ready executive summary with WCAG findings and Agentic Lighthouse averages |
+| `a11y-github-tickets.csv` | Backlog-ready tickets for global issues, page-level issues, and low agentic scores |
+| `a11y-image-alts.csv` | Image alt-text inventory with readability ratings and suggested review notes |
+| `agentic-lighthouse-scores.csv` | Per-page, per-category agent-readiness scores with findings and recommendations |
+| `agentic-lighthouse-report.json` | Structured Agentic Lighthouse scoring details for every scored page |
+| `latest` | Text pointer containing the latest run ID |
 
-- `urls.txt`: URL list used for the run.
-- `a11y-violations.csv`: one row per violating axe node, with impact, priority, importance, WCAG refs, ownership hints, and recommendations.
-- `a11y-report.json`: full per-page JSON scan results, including axe results and Agentic Lighthouse page details.
-- `a11y-run-metadata.json`: run timing, page counts, axe rollups, and agentic scoring rollups.
-- `a11y-summary-google-doc.md`: paste-ready executive summary with WCAG findings and Agentic Lighthouse averages.
-- `a11y-github-tickets.csv`: backlog-ready tickets for global accessibility issues, page-level accessibility issues, and low agentic category scores.
-- `a11y-image-alts.csv`: image alt-text inventory with readability ratings and suggested review notes.
-- `agentic-lighthouse-scores.csv`: per-page, per-category agent-readiness scores with findings, evidence, priority, importance, and recommendations.
-- `agentic-lighthouse-report.json`: structured Agentic Lighthouse scoring details for every scored page.
-- `latest`: text pointer containing the latest run ID.
+## What a full audit runs
 
-### Agentic score thresholds
+The `audit` workflow runs four steps:
 
-- `90-100`: pass
-- `70-89`: needs review
-- `0-69`: fail
+1. Discover URLs from the sitemap, unless `--urls-file` is provided.
+2. Scan pages with Playwright, axe-core, image-alt inventory, and Agentic Lighthouse scoring.
+3. Generate a Google Docs-ready Markdown summary.
+4. Generate a GitHub/backlog-ready ticket CSV, unless `--no-tickets` is used.
+
+The scan is intentionally two-layered:
+
+- **WCAG/axe layer**: finds accessibility violations and affected DOM nodes.
+- **Agentic Lighthouse layer**: scores how well AI/browser agents can understand, call, and safely operate functional page surfaces.
+
+## Importance and out-of-control flags
+
+Violation output includes an **importance** field in addition to impact/priority for triage in ticketing systems.
+
+The scan also flags issues that are **likely out of direct control** when they appear inside iframes, embedded media players, third-party widgets, or externally hosted embeds.
+
+### Violation output fields
+
+- `importance`, `likely_out_of_control`, `control_notes`
+
+### Ticket/backlog fields
+
+- `importance`, `likely_out_of_control`, `control_notes`, `ticket_notes`
+
+The out-of-control detection is a **best-effort heuristic** designed to surface likely iframe/embed issues for manual review.
+
+## Agentic Lighthouse scoring
+
+Each scan includes an agent-readiness score modeled after Lighthouse-style category scoring, separate from axe/WCAG violations.
+
+### Categories
+
+| Category | What it checks |
+|----------|---------------|
+| **WebMCP Protocol** | WebMCP-style manifests, page-level registration signals, named functional surfaces (cart, checkout, search, filter, sort, login, booking) |
+| **Accessibility Trees** | Whether form controls and clickable components expose precise accessible names through labels, text, ARIA, titles, or placeholders |
+| **Semantic Data Formatting** | Machine-readable discovery files: `/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/.well-known/ai-plugin.json` |
+| **Layout Stability** | Observed cumulative layout shift and whether interactive controls move after page load |
+
+### Score thresholds
+
+- `90–100`: pass
+- `70–89`: needs review
+- `0–69`: fail
 
 Agentic tickets are generated for category scores below `90`.
 
----
+## Additional scripts
+
+### Build a URL list from a sitemap
+
+Discover and export all URLs from a site's sitemap without running an audit:
+
+```bash
+node scripts/build-urls-from-sitemap.mjs --site https://www.example.com --out ./reports/urls.txt
+```
+
+### Scan an existing URL list
+
+Run the Playwright + axe-core + agentic scan against a pre-built URL list:
+
+```bash
+node scripts/a11y-audit.mjs --urls-file ./reports/urls.txt --out-dir ./reports --run-id <run-id>
+```
+
+### Scan by crawling from a start URL
+
+```bash
+node scripts/a11y-audit.mjs --crawl --start https://www.example.com --max-pages 50 --out-dir ./reports
+```
+
+### Generate only the Markdown summary
+
+```bash
+node scripts/generate-google-doc-report.mjs --run-dir ./reports/<run-id> --site https://www.example.com
+```
+
+### Generate only the ticket/backlog CSV
+
+```bash
+node scripts/generate-ticket-csv.mjs --run-dir ./reports/<run-id>
+```
+
+### Convert a saved sitemap XML to a URL list
+
+Extract URLs from a locally saved sitemap XML file:
+
+```bash
+node scripts/convert-sitemap-xml-to-urls.mjs --input ./saved-sitemap.xml --out ./reports/urls.txt
+```
+
+## CLI commands reference
+
+When installed globally via npm, all commands are available through the `universal-a11y-audit` or `uaaudit` CLI:
+
+| Command | Description |
+|---------|-------------|
+| `audit --site <url>` | Full workflow: build URLs, scan, summary, ticket CSV |
+| `build-urls --site <url> --out <path>` | Build a URL list from sitemap discovery |
+| `scan --urls-file <path> --out-dir <path>` | Run Playwright + axe-core + agentic scan |
+| `report --run-dir <path>` | Generate the docs-ready Markdown summary |
+| `tickets --run-dir <path>` | Generate the GitHub/backlog ticket CSV |
+| `sitemap-xml-to-urls --input <path> --out <path>` | Convert a saved sitemap XML into `urls.txt` |
+| `help` | Show CLI help |
+| `version` | Show package version |
+
+```bash
+universal-a11y-audit audit --site https://www.example.com
+universal-a11y-audit audit --site https://www.example.com --slow --respect-robots --cloudflare-aware
+universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
+universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
+universal-a11y-audit report --run-dir ./reports/<run-id>
+universal-a11y-audit tickets --run-dir ./reports/<run-id>
+universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
+```
+
+## pnpm / npm scripts
+
+| Script | Description |
+|--------|-------------|
+| `pnpm audit` | Full audit against example.com |
+| `pnpm audit:crawl` | Crawl-based audit (max 50 pages) |
+| `pnpm audit:urls` | Scan from a pre-built URL list |
+| `pnpm audit:slow` | Full audit in slow/protected-site mode |
+| `pnpm build:urls` | Build URLs from sitemap only |
+| `pnpm report` | Generate summary from latest run |
+| `pnpm sitemap:xml-to-urls` | Convert saved sitemap XML to URL list |
+| `pnpm pack:check` | Dry-run npm pack to verify package contents |
 
 ## Public repo safety
 
-This repo is intended to stay public.
-
-Do **not** commit:
+This repo is intended to stay public. Do **not** commit:
 
 - `.npmrc` with real tokens
-- npm access tokens
-- GitHub personal access tokens
+- npm or GitHub access tokens
 - `.env` files with secrets
 - generated real-world reports under `reports/`
 - saved sitemap XML files from client sites
 - internal or staging URLs
 - browser/session files
-
-This repo already ignores the common risky files in `.gitignore`, but you should still review what is staged before pushing.
 
 ### Quick checks before pushing
 
@@ -330,221 +372,9 @@ git grep -n "github_pat_"
 git grep -n "ghp_"
 ```
 
----
+## Publishing
 
-## Publishing overview
-
-This project is set up to:
-
-1. stay a normal GitHub repo
-2. publish as a public npm CLI package
-3. optionally publish to GitHub Packages later
-4. auto-publish from GitHub Actions on version tags
-
-See **PUBLISHING.md** for the exact release steps.
-
----
-
-## Commands reference
-
-### Installed CLI commands
-
-```bash
-universal-a11y-audit help
-universal-a11y-audit version
-universal-a11y-audit audit --site https://www.example.com
-universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
-universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
-universal-a11y-audit report --run-dir ./reports/<run-id>
-universal-a11y-audit tickets --run-dir ./reports/<run-id>
-universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
-```
-
-The shorter alias works the same way:
-
-```bash
-uaaudit audit --site https://www.example.com
-```
-
-### Source commands
-
-Full audit:
-
-```bash
-node scripts/run-audit.mjs --site https://www.example.com
-```
-
-Full audit with explicit output folder:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --out-dir ./reports
-```
-
-Protected-site slow mode:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware
-```
-
-Small-batch helper:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./reports/manual-urls.txt \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware \
-  --batch-size 10
-```
-
-Build URLs only:
-
-```bash
-node scripts/build-urls-from-sitemap.mjs \
-  --site https://www.example.com \
-  --out ./reports/<run-id>/urls.txt
-```
-
-Scan an existing URL list:
-
-```bash
-node scripts/a11y-audit.mjs \
-  --urls-file ./reports/<run-id>/urls.txt \
-  --out-dir ./reports \
-  --run-id <run-id>
-```
-
-Scan by crawling from a start URL:
-
-```bash
-node scripts/a11y-audit.mjs \
-  --crawl \
-  --start https://www.example.com \
-  --max-pages 50 \
-  --out-dir ./reports
-```
-
-Generate only the Markdown summary:
-
-```bash
-node scripts/generate-google-doc-report.mjs \
-  --run-dir ./reports/<run-id> \
-  --site https://www.example.com
-```
-
-Generate only the ticket/backlog CSV:
-
-```bash
-node scripts/generate-ticket-csv.mjs \
-  --run-dir ./reports/<run-id>
-```
-
-Convert browser-saved sitemap XML into `urls.txt`:
-
-```bash
-node scripts/convert-sitemap-xml-to-urls.mjs \
-  --input ./saved-sitemap.xml \
-  --out ./reports/<run-id>/urls.txt
-```
-
-### Common options
-
-- `--site`: site origin to discover and audit.
-- `--sitemap-url`: explicit sitemap URL when auto-discovery is not enough.
-- `--urls-file`: use an existing URL list instead of building one from a sitemap.
-- `--out-dir`: base output folder, defaults to `reports`.
-- `--run-id`: explicit run folder name.
-- `--batch-size`: cap the number of URLs scanned in one run.
-- `--slow`: use more conservative navigation timing and retries.
-- `--respect-robots`: respect `robots.txt` disallow rules during URL filtering/crawling.
-- `--cloudflare-aware`: detect likely Cloudflare/WAF challenge pages and back off.
-- `--retries`: override navigation retry count.
-- `--backoff-ms`: override retry backoff timing.
-- `--crawl-delay-ms`: add delay between scanned pages.
-- `--no-tickets`: skip ticket CSV generation in the full `audit` workflow.
-- `--http-username` / `--http-password`: HTTP Basic Auth credentials.
-- `--auth-config`: local form-login config file.
-
-### npm scripts
-
-```bash
-npm run audit
-npm run audit:crawl
-npm run audit:urls
-npm run audit:slow
-npm run build:urls
-npm run report
-npm run sitemap:xml-to-urls
-npm run pack:check
-```
-
----
-
-## Long-running scans, warnings, and progress indicators
-
-Some scans can take a while, especially when:
-
-- the site has **many pages**
-- you are using `--slow`
-- the site has **Cloudflare / WAF / bot protection**
-- pages are very large or have many violations
-- axe analysis takes longer on complex pages
-
-To make this clearer, the tool prints startup advisories, ETA hints, and heartbeat lines.
-
-### Startup advisories
-At the start of a scan, the tool may print notices such as:
-
-- large scan detected
-- small-batch mode enabled
-- slow/protected-site mode enabled
-- crawl delay in use
-- retry/backoff policy in use
-- Cloudflare-aware detection enabled
-
-These are informational and help set expectations before the scan begins.
-
-### ETA and heartbeat lines
-Each page starts with an ETA hint, for example:
-
-```text
-[3/25] Scanning: https://example.com/page | ETA remaining: 7.5m
-```
-
-If a navigation or analysis step takes a while, the tool also prints heartbeat lines such as:
-
-```text
-… still working on https://example.com/some-page (axe analysis) | elapsed 22.1s | ETA remaining: 6.3m
-```
-
-This means the process is still running and has **not stalled**.
-
-### Important note
-A page with many violations, lots of DOM nodes, or heavy client-side rendering may legitimately take longer to analyze. The heartbeat output is there to make long pages easier to trust.
-
-
-Protected-site small-batch run:
-
-```bash
-node scripts/run-audit.mjs \
-  --site https://www.example.com \
-  --urls-file ./reports/manual-urls.txt \
-  --slow \
-  --respect-robots \
-  --cloudflare-aware \
-  --batch-size 10
-```
-
-> Fix note: run folders now consistently use `site-name + timestamp`, for example `example.com-20260307-094546`.
-
----
+This project publishes as a public npm CLI package with optional GitHub Actions auto-publish on version tags. See **PUBLISHING.md** for the exact release steps.
 
 ## License
 

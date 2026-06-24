@@ -13,6 +13,31 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+const c = {
+  reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
+  brightRed: '\x1b[91m', brightGreen: '\x1b[92m', brightYellow: '\x1b[93m',
+  brightBlue: '\x1b[94m', brightMagenta: '\x1b[95m', brightCyan: '\x1b[96m',
+};
+const rainbowColors = [c.brightRed, c.brightYellow, c.brightGreen, c.brightCyan, c.brightBlue, c.brightMagenta];
+function rainbow(text) {
+  return [...text].map((ch, i) => ch === ' ' ? ch : `${rainbowColors[i % rainbowColors.length]}${ch}`).join('') + c.reset;
+}
+function formatDuration(ms) {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
+}
+function phaseHeader(step, total, label, icon = '▸') {
+  console.log('');
+  console.log(`  ${rainbow(icon)} ${c.bold}${c.brightCyan}Step ${step}/${total}: ${label}${c.reset} ${c.dim}${'─'.repeat(Math.max(0, 44 - label.length))}${c.reset}`);
+}
+function phaseDone(label, elapsed) {
+  console.log(`    ${c.brightGreen}✔${c.reset} ${label} ${c.dim}in${c.reset} ${c.brightYellow}${formatDuration(elapsed)}${c.reset}`);
+}
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
@@ -98,6 +123,16 @@ function main() {
   const outDir = path.join(baseOutDir, runId);
   fs.mkdirSync(outDir, { recursive: true });
 
+  const auditStartTime = Date.now();
+  console.log('');
+  console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
+  console.log(`  ${rainbow('║')}  ${c.bold}${c.brightCyan}♿ Universal Accessibility Audit${c.reset}                       ${rainbow('║')}`);
+  console.log(`  ${rainbow('║')}  ${c.dim}WCAG · axe-core · Agentic Lighthouse · Alt Text${c.reset}        ${rainbow('║')}`);
+  console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
+  console.log('');
+  if (site) console.log(`  ${c.brightMagenta}🎯${c.reset} ${c.bold}Target:${c.reset}  ${c.brightCyan}${site}${c.reset}`);
+  console.log(`  ${c.brightMagenta}📁${c.reset} ${c.bold}Output:${c.reset}  ${c.dim}${outDir}${c.reset}`);
+
   let sheetId = args["sheet-id"] || "SHEET_ID";
   let sheetGid = args["sheet-gid"] || "0";
   if (args["sheet-url"]) {
@@ -109,9 +144,9 @@ function main() {
   const urlsFile = args["urls-file"] ? path.resolve(args["urls-file"]) : path.join(outDir, "urls.txt");
   const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
-  // Step 1: Build URLs unless user provided a URL file
   if (!args["urls-file"]) {
-    console.log("\n=== Step 1/4: Build URL list from sitemap ===");
+    phaseHeader(1, 4, 'Build URL list from sitemap', '🗺️');
+    const stepStart = Date.now();
     const buildArgs = ["--out", urlsFile];
     if (site) buildArgs.push("--site", site);
     if (args["sitemap-url"]) buildArgs.push("--sitemap-url", args["sitemap-url"]);
@@ -126,9 +161,10 @@ function main() {
       if (site) printBotNotice(site);
       process.exit(build.status || 1);
     }
+    phaseDone('URLs discovered', Date.now() - stepStart);
   } else {
-    console.log("\n=== Step 1/4: Using provided URL file ===");
-    console.log(`Using URLs file: ${urlsFile}`);
+    phaseHeader(1, 4, 'Using provided URL file', '📄');
+    console.log(`    ${c.dim}File:${c.reset} ${urlsFile}`);
   }
 
 
@@ -148,8 +184,8 @@ function main() {
     }
   }
 
-  // Step 2: Run audit
-  console.log("\n=== Step 2/4: Run accessibility + agentic Lighthouse audit (Playwright + axe-core) ===");
+  phaseHeader(2, 4, 'Accessibility + Agentic Lighthouse scan', '🔍');
+  const scanStepStart = Date.now();
   const auditArgs = [
     "--urls-file", urlsFile,
     "--out-dir", baseOutDir,
@@ -181,20 +217,35 @@ function main() {
     if (site) printBotNotice(site);
     process.exit(audit.status || 1);
   }
+  phaseDone('Scan complete', Date.now() - scanStepStart);
 
-  // Step 3: Generate docs-ready report
-  console.log("\n=== Step 3/4: Generate Google Docs-ready report ===");
+  phaseHeader(3, 4, 'Generate Google Docs-ready report', '📝');
+  const reportStepStart = Date.now();
   const repArgs = ["--run-dir", outDir];
   if (site) repArgs.push("--site", site);
   runNodeScript(path.resolve("scripts/generate-google-doc-report.mjs"), repArgs);
+  phaseDone('Report generated', Date.now() - reportStepStart);
 
-  // Step 4: Generate ticket CSV
-  console.log("\n=== Step 4/4: Generate GitHub ticket backlog CSV ===");
+  phaseHeader(4, 4, 'Generate GitHub ticket backlog CSV', '🎫');
+  const ticketStepStart = Date.now();
   if (!args["no-tickets"]) {
     runNodeScript(path.resolve("scripts/generate-ticket-csv.mjs"), ["--run-dir", outDir, "--sheet-id", sheetId, "--sheet-gid", sheetGid]);
+  } else {
+    console.log(`    ${c.dim}Skipped (--no-tickets)${c.reset}`);
   }
+  phaseDone('Tickets generated', Date.now() - ticketStepStart);
 
-  console.log(`\nRun folder: ${outDir}`);
+  const totalElapsed = Date.now() - auditStartTime;
+  console.log('');
+  console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
+  console.log(`  ${rainbow('║')}  ${c.bold}${c.brightGreen}✨ Audit Complete!${c.reset}                                    ${rainbow('║')}`);
+  console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
+  console.log('');
+  console.log(`  ${c.brightCyan}⏱️${c.reset}  ${c.bold}Total time${c.reset}   ${c.brightYellow}${formatDuration(totalElapsed)}${c.reset}`);
+  console.log(`  ${c.brightCyan}📁${c.reset} ${c.bold}Run folder${c.reset}   ${c.dim}${outDir}${c.reset}`);
+  console.log('');
+  console.log(`  ${rainbow('★ ★ ★')} ${c.dim}Happy auditing!${c.reset} ${rainbow('★ ★ ★')}`);
+  console.log('');
 }
 
 main();
