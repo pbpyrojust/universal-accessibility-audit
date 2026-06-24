@@ -22,7 +22,7 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.57.0"
   },
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "CLI toolkit for WCAG accessibility audits and Agentic Lighthouse scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs.",
   "author": "Justin Adams (https://justwhat.net)",
   "homepage": "https://github.com/pbpyrojust/universal-accessibility-audit#readme",

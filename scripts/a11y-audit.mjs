@@ -215,7 +215,7 @@ async function runAxe(page) {
   return await page.evaluate(async () => {
     return await axe.run(document, {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
-      resultTypes: ["violations", "incomplete", "passes"],
+      resultTypes: ["violations"],
     });
   });
 }
@@ -331,10 +331,10 @@ function summarizeAgenticFindings(findings = []) {
   return findings.slice(0, 5).join(" | ");
 }
 
-function estimateRemaining(completedDurations, completedCount, totalCount) {
-  if (completedCount <= 0) return "estimating…";
+function estimateRemaining(avgMs, completedCount, totalCount) {
+  if (completedCount <= 0 || avgMs <= 0) return "estimating…";
   const remaining = Math.max(0, totalCount - completedCount);
-  return formatDuration(avg(completedDurations) * remaining);
+  return formatDuration(avgMs * remaining);
 }
 
 function createHeartbeat(label, intervalMs = 10000, etaLabel = "") {
@@ -351,7 +351,10 @@ function printStartupAdvisories({ urlCount, slowMode, cfAware, crawlDelayMs, ret
   const estTotal = urlCount * estPerPage;
   statusMsg('⏱️', c.brightMagenta, `Estimated: ${c.bold}~${formatDuration(estTotal)}${c.reset} ${c.dim}(${urlCount} pages${slowMode ? ', slow mode' : ''})${c.reset}`);
   if (urlCount >= 100) statusMsg('📋', c.brightYellow, `Large scan detected (${c.bold}${urlCount}${c.reset}${c.brightYellow} pages). This may take a while.${c.reset}`);
-  if (urlCount >= 500) statusMsg('⚠', c.brightRed, `Very large scan. Consider smaller batches if the site is sensitive or rate-limited.`);
+  if (urlCount >= 500) {
+    statusMsg('⚠', c.brightRed, `Very large scan. Consider smaller batches if the site is sensitive or rate-limited.`);
+    statusMsg('💡', c.dim, `Tip: for 500+ pages, run with: ${c.reset}node --max-old-space-size=4096 scripts/a11y-audit.mjs ...`);
+  }
   if (batchSize > 0) statusMsg('📦', c.cyan, `Small-batch mode enabled (${c.bold}${batchSize}${c.reset} page max for this run).`);
   if (hasAuth) statusMsg('🔐', c.brightMagenta, `Authenticated mode enabled for protected/staging/dev sites.`);
   if (slowMode) statusMsg('🐢', c.brightYellow, `Running in ${c.bold}--slow${c.reset}${c.brightYellow} mode (conservative timing + retries).${c.reset}`);
@@ -835,8 +838,8 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const contextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)" };
   if (auth.httpCredentials) contextOptions.httpCredentials = auth.httpCredentials;
-  const context = await browser.newContext(contextOptions);
-  const page = await context.newPage();
+  let context = await browser.newContext(contextOptions);
+  let page = await context.newPage();
   if (auth.formAuth) {
     await maybePerformFormLogin(page, auth.formAuth, slowMode);
   }
@@ -850,18 +853,30 @@ async function main() {
   const agenticResults = [];
   const agentResourceCache = new Map();
   const startedAt = Date.now();
-  const completedDurations = [];
+  let completedCount = 0;
+  let completedTotalMs = 0;
   let totalViolationNodes = 0;
   let pageErrors = 0;
   const byImpact = new Map();
   const byRule = new Map();
   const byPage = new Map();
+  const contextRecycleInterval = 25;
 
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
     const idx = i + 1;
+
+    if (idx > 1 && (idx - 1) % contextRecycleInterval === 0) {
+      await context.close();
+      const freshContextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)" };
+      if (auth.httpCredentials) freshContextOptions.httpCredentials = auth.httpCredentials;
+      context = await browser.newContext(freshContextOptions);
+      page = await context.newPage();
+      if (auth.formAuth) await maybePerformFormLogin(page, auth.formAuth, slowMode);
+    }
+
     const pageStart = Date.now();
-    const etaBefore = estimateRemaining(completedDurations, i, urls.length);
+    const etaBefore = estimateRemaining(completedCount > 0 ? completedTotalMs / completedCount : 0, completedCount, urls.length);
     const shortUrl = decodeUrlForDisplay(url).length > 55 ? decodeUrlForDisplay(url).slice(0, 52) + '...' : decodeUrlForDisplay(url);
     progressLine(idx, urls.length, shortUrl, `${c.dim}ETA:${c.reset} ${c.brightYellow}~${etaBefore}${c.reset}`);
     console.log('');
@@ -874,8 +889,6 @@ async function main() {
 
       try {
         const agentic = await runAgenticLighthouseAudit(page, url, agentResourceCache);
-        agenticResults.push(agentic);
-        pageResult.agenticLighthouse = agentic;
         for (const category of agentic.categories) {
           agenticRows.push({
             page_url: url,
@@ -893,6 +906,10 @@ async function main() {
             recommendation: category.recommendation,
           });
         }
+        // Drop raw pageSignals to free memory — scores and evidence are already extracted
+        delete agentic.pageSignals;
+        agenticResults.push(agentic);
+        pageResult.agenticLighthouse = { score: agentic.score, status: agentic.status };
       } catch (e) {
         console.warn(`    ${c.brightYellow}⚠${c.reset} Agentic scoring skipped ${c.dim}(${String(e?.message || e).slice(0, 60)})${c.reset}`);
       }
@@ -935,19 +952,26 @@ async function main() {
         console.warn(`    ${c.brightYellow}⚠${c.reset} Alt report skipped ${c.dim}(${String(e?.message || e).slice(0, 60)})${c.reset}`);
       }
 
-      const stopAxeHeartbeat = createHeartbeat(`${c.dim}${decodeUrlForDisplay(url)}${c.reset} ${c.brightCyan}(axe analysis)${c.reset}`, 10000, `${c.dim}ETA:${c.reset} ${c.brightYellow}~${estimateRemaining(completedDurations, i, urls.length)}${c.reset}`);
-      const axe = await runAxe(page);
+      const stopAxeHeartbeat = createHeartbeat(`${c.dim}${decodeUrlForDisplay(url)}${c.reset} ${c.brightCyan}(axe analysis)${c.reset}`, 10000, `${c.dim}ETA:${c.reset} ${c.brightYellow}~${estimateRemaining(completedCount > 0 ? completedTotalMs / completedCount : 0, completedCount, urls.length)}${c.reset}`);
+      let axe = await runAxe(page);
       stopAxeHeartbeat();
-      pageResult.axe = axe;
       let pageViolationNodes = 0;
+      const violationSummary = [];
       for (const v of axe.violations || []) {
         byRule.set(v.id, (byRule.get(v.id) || 0) + 1);
         byImpact.set(v.impact || "unknown", (byImpact.get(v.impact || "unknown") || 0) + 1);
+        violationSummary.push({ id: v.id, impact: v.impact || "", nodeCount: (v.nodes || []).length });
         for (const node of v.nodes || []) {
           pageViolationNodes++;
           byPage.set(url, (byPage.get(url) || 0) + 1);
           const target = Array.isArray(node.target) ? node.target.join(" | ") : String(node.target || "");
           const wcagRefs = extractWcagRefs(v.tags || []);
+          const controlCheck = detectOutOfControlIssue({
+            selectorTarget: target,
+            htmlSnippet: node.html || "",
+            failureSummary: node.failureSummary || "",
+            helpUrl: v.helpUrl || "",
+          });
           csvRows.push({
             scope: "Page",
             page_url: url,
@@ -967,24 +991,20 @@ async function main() {
             rule_filter_url: sheetFilterUrl(sheetId, sheetGid, "rule_id", v.id),
             impact_filter_url: sheetFilterUrl(sheetId, sheetGid, "impact", v.impact || ""),
             page_filter_url: sheetFilterUrl(sheetId, sheetGid, "page_url", url),
-            likely_out_of_control: detectOutOfControlIssue({
-              selectorTarget: target,
-              htmlSnippet: node.html || "",
-              failureSummary: node.failureSummary || "",
-              helpUrl: v.helpUrl || "",
-            }).likely_out_of_control,
-            control_notes: detectOutOfControlIssue({
-              selectorTarget: target,
-              htmlSnippet: node.html || "",
-              failureSummary: node.failureSummary || "",
-              helpUrl: v.helpUrl || "",
-            }).control_notes,
+            likely_out_of_control: controlCheck.likely_out_of_control,
+            control_notes: controlCheck.control_notes,
             recommendation: "Fix the issue per axe guidance; ensure WCAG 2.1 Level AA compliance for this component/site-wide pattern.",
           });
         }
       }
       totalViolationNodes += pageViolationNodes;
-      completedDurations.push(Date.now() - pageStart);
+
+      // Null out the massive axe result — CSV already has the full details.
+      // Keep only a slim summary for the JSON report (same pattern as SEO audit's result = null).
+      axe = null;
+      pageResult.axe = { violationCount: pageViolationNodes, violations: violationSummary };
+
+      completedCount++; completedTotalMs += Date.now() - pageStart;
       console.log(`    ${c.brightGreen}✔${c.reset} Done in ${c.brightYellow}${formatElapsed(pageStart)}${c.reset} ${c.dim}|${c.reset} violations: ${pageViolationNodes > 0 ? c.brightRed : c.brightGreen}${pageViolationNodes}${c.reset} ${c.dim}|${c.reset} total: ${c.bold}${totalViolationNodes}${c.reset} ${c.dim}|${c.reset} elapsed: ${c.brightYellow}${formatElapsed(startedAt)}${c.reset}`);
     } catch (err) {
       pageResult.ok = false;
@@ -1014,12 +1034,13 @@ async function main() {
         control_notes: isBot ? "Bot protection prevented analysis. This is not necessarily a code issue in your control." : "Manual review needed to determine whether the failing element is first-party or embedded.",
         recommendation: isBot ? "Back off, wait before retrying, and consider smaller batches with --slow --respect-robots --cloudflare-aware." : "Confirm the page is publicly accessible without auth/bot protection. Re-run scan; if persistent, ticket separately.",
       });
-      completedDurations.push(Date.now() - pageStart);
+      completedCount++; completedTotalMs += Date.now() - pageStart;
       console.log(`    ${c.brightRed}✘${c.reset} Error in ${c.brightYellow}${formatElapsed(pageStart)}${c.reset} ${c.dim}|${c.reset} ${c.brightRed}${pageResult.error.slice(0, 80)}${c.reset} ${c.dim}|${c.reset} elapsed: ${c.brightYellow}${formatElapsed(startedAt)}${c.reset}`);
     }
     siteResults.push(pageResult);
   }
 
+  await context.close();
   await browser.close();
   phaseDone('Page scanning', Date.now() - scanStart);
 
