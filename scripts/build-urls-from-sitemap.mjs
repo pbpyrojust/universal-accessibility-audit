@@ -92,16 +92,27 @@ async function fetchText(url, timeoutMs = 30000) {
 }
 
 function detectCloudflareOrBot(text, status) {
-  const s = String(text || "").toLowerCase();
+  const raw = String(text || "");
+  const s = raw.toLowerCase();
   if ([403, 429, 503].includes(Number(status))) return true;
-  return (
+
+  const isCloudflare =
     s.includes("just a moment") ||
     s.includes("cf-browser-verification") ||
-    s.includes("attention required") ||
-    s.includes("cloudflare") ||
-    s.includes("captcha") ||
-    s.includes("verify you are human")
-  );
+    s.includes("checking your browser before accessing") ||
+    s.includes("ddos protection by cloudflare") ||
+    (s.includes("attention required") && s.includes("cloudflare"));
+
+  // Sitemap/robots responses are expected to be short XML/text, but a captcha
+  // *widget* class name can still appear incidentally, so still gate the
+  // generic term on page size rather than trusting a bare substring match.
+  const textLength = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().length;
+  const isSmallPage = textLength < 1000;
+  const hasExplicitCaptchaChallenge = s.includes("verify you are human") || s.includes("please complete the security check");
+  const hasGenericCaptchaTerm = s.includes("captcha") || s.includes("hcaptcha") || s.includes("recaptcha");
+  const isCaptcha = hasExplicitCaptchaChallenge || (isSmallPage && hasGenericCaptchaTerm);
+
+  return isCloudflare || isCaptcha;
 }
 
 function extractLocs(xml) {

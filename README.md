@@ -88,6 +88,8 @@ node scripts/run-audit.mjs --site <url> [options]
 | `--backoff-ms <ms>` | Override retry backoff timing |
 | `--crawl-delay-ms <ms>` | Add delay between scanned pages |
 | `--no-tickets` | Skip ticket CSV generation in the full audit workflow |
+| `--no-visual-report` | Skip HTML dashboard and PDF generation in the full audit workflow |
+| `--brand-config <path>` | Path to a branding JSON config for the visual dashboard/PDF |
 | `--sheet-url <url>` | Google Sheet URL for filter link generation |
 | `--include-path <filter>` | Include only URLs matching this path filter |
 | `--exclude-path <filter>` | Exclude URLs matching this path filter |
@@ -200,6 +202,8 @@ reports/
     a11y-image-alts.csv
     agentic-lighthouse-scores.csv
     agentic-lighthouse-report.json
+    a11y-dashboard.html
+    a11y-dashboard.pdf
   latest
 ```
 
@@ -214,16 +218,58 @@ reports/
 | `a11y-image-alts.csv` | Image alt-text inventory with readability ratings and suggested review notes |
 | `agentic-lighthouse-scores.csv` | Per-page, per-category agent-readiness scores with findings and recommendations |
 | `agentic-lighthouse-report.json` | Structured Agentic Lighthouse scoring details for every scored page |
+| `a11y-dashboard.html` | Branded, stakeholder-ready visual HTML dashboard |
+| `a11y-dashboard.pdf` | PDF export of the same dashboard, ready to share or print |
 | `latest` | Text pointer containing the latest run ID |
+
+## Visual HTML dashboard & branded PDF report
+
+Every audit run also generates a stakeholder-friendly visual report, similar in spirit to commercial SEO audit dashboards: a branded, single-page HTML dashboard plus a matching PDF export, both built from the same CSV/JSON data as the raw outputs above.
+
+The dashboard includes:
+
+- Headline metric cards: pages scanned, violation nodes, clean pages, impact severity (critical/serious/moderate/minor), WCAG A/AA/AAA breakdown, agentic readiness score, and missing alt text
+- Executive summary and top violation rules
+- Top priority fixes (pulled from the ticket backlog, ranked by violation volume)
+- Most affected pages
+- Image alt-text quality (missing alt vs. flagged-for-review, with a sample table)
+- Agentic readiness breakdown by category and by page
+
+Regenerate it any time from existing CSV/JSON data (useful after manual edits or with updated branding):
+
+```bash
+node scripts/generate-a11y-visual-report.mjs --run-dir reports/<run-folder> --site https://www.example.com
+node scripts/generate-a11y-visual-report.mjs --run-dir reports/<run-folder> --site https://www.example.com --brand-config ./branding.json
+```
+
+### Branding
+
+Copy `branding.example.json` to `branding.json` and customize it to white-label the dashboard for a client or stakeholder audience:
+
+```json
+{
+  "companyName": "JustWhat.net",
+  "logo": "./assets/logo.png",
+  "primaryColor": "#7c3aed",
+  "secondaryColor": "#111827",
+  "accentColor": "#22c55e",
+  "reportTitle": "Accessibility & WCAG Compliance Audit",
+  "author": "Justin Adams",
+  "footerText": "Confidential — Prepared by JustWhat.net"
+}
+```
+
+Pass it with `--brand-config ./branding.json` on `audit` or `visual-report`. Use `--no-visual-report` on `audit` to skip HTML/PDF generation.
 
 ## What a full audit runs
 
-The `audit` workflow runs four steps:
+The `audit` workflow runs five steps:
 
 1. Discover URLs from the sitemap, unless `--urls-file` is provided.
 2. Scan pages with Playwright, axe-core, image-alt inventory, and Agentic Lighthouse scoring.
 3. Generate a Google Docs-ready Markdown summary.
 4. Generate a GitHub/backlog-ready ticket CSV, unless `--no-tickets` is used.
+5. Generate the branded HTML dashboard and PDF report, unless `--no-visual-report` is used.
 
 The scan is intentionally two-layered:
 
@@ -303,6 +349,13 @@ node scripts/generate-google-doc-report.mjs --run-dir ./reports/<run-id> --site 
 node scripts/generate-ticket-csv.mjs --run-dir ./reports/<run-id>
 ```
 
+### Regenerate the visual dashboard
+
+```bash
+node scripts/generate-a11y-visual-report.mjs --run-dir ./reports/<run-id> --site https://www.example.com
+node scripts/generate-a11y-visual-report.mjs --run-dir ./reports/<run-id> --site https://www.example.com --brand-config ./branding.json
+```
+
 ### Convert a saved sitemap XML to a URL list
 
 Extract URLs from a locally saved sitemap XML file:
@@ -317,11 +370,12 @@ When installed globally via npm, all commands are available through the `univers
 
 | Command | Description |
 |---------|-------------|
-| `audit --site <url>` | Full workflow: build URLs, scan, summary, ticket CSV |
+| `audit --site <url>` | Full workflow: build URLs, scan, summary, ticket CSV, visual dashboard |
 | `build-urls --site <url> --out <path>` | Build a URL list from sitemap discovery |
 | `scan --urls-file <path> --out-dir <path>` | Run Playwright + axe-core + agentic scan |
 | `report --run-dir <path>` | Generate the docs-ready Markdown summary |
 | `tickets --run-dir <path>` | Generate the GitHub/backlog ticket CSV |
+| `visual-report --run-dir <path>` | Generate the branded HTML dashboard + PDF report |
 | `sitemap-xml-to-urls --input <path> --out <path>` | Convert a saved sitemap XML into `urls.txt` |
 | `help` | Show CLI help |
 | `version` | Show package version |
@@ -329,10 +383,12 @@ When installed globally via npm, all commands are available through the `univers
 ```bash
 universal-a11y-audit audit --site https://www.example.com
 universal-a11y-audit audit --site https://www.example.com --slow --respect-robots --cloudflare-aware
+universal-a11y-audit audit --site https://www.example.com --brand-config ./branding.json
 universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
 universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
 universal-a11y-audit report --run-dir ./reports/<run-id>
 universal-a11y-audit tickets --run-dir ./reports/<run-id>
+universal-a11y-audit visual-report --run-dir ./reports/<run-id> --brand-config ./branding.json
 universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
 ```
 
@@ -346,6 +402,7 @@ universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./rep
 | `pnpm audit:slow` | Full audit in slow/protected-site mode |
 | `pnpm build:urls` | Build URLs from sitemap only |
 | `pnpm report` | Generate summary from latest run |
+| `pnpm report:visual` | Generate the HTML dashboard + PDF from latest run |
 | `pnpm sitemap:xml-to-urls` | Convert saved sitemap XML to URL list |
 | `pnpm pack:check` | Dry-run npm pack to verify package contents |
 
@@ -360,6 +417,7 @@ This repo is intended to stay public. Do **not** commit:
 - saved sitemap XML files from client sites
 - internal or staging URLs
 - browser/session files
+- a real `branding.json` with a client's logo path, name, or footer text (use `branding.example.json` as the template)
 
 ### Quick checks before pushing
 

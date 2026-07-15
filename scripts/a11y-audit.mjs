@@ -109,22 +109,36 @@ function normalizeWhitespace(s) { return String(s || "").replace(/\s+/g, " ").tr
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function detectBotChallengeHtml(html = "", status = 0) {
-  const s = String(html || "").toLowerCase();
-  return {
-    detected:
-      [403, 429, 503].includes(Number(status)) ||
-      s.includes("cf-browser-verification") ||
-      s.includes("just a moment") ||
-      s.includes("attention required") ||
-      s.includes("verify you are human") ||
-      s.includes("cloudflare") ||
-      s.includes("captcha"),
-    type: s.includes("cloudflare") || s.includes("cf-browser-verification") || s.includes("just a moment")
-      ? "cloudflare"
-      : s.includes("captcha") ? "captcha"
-      : [403,429,503].includes(Number(status)) ? `http_${status}` : "unknown",
-    status: Number(status) || 0,
-  };
+  const raw = String(html || "");
+  const s = raw.toLowerCase();
+  const statusBlocked = [403, 429, 503].includes(Number(status));
+
+  // Real Cloudflare interstitials use these specific markers; "cloudflare" alone
+  // is too common (CDN links, footer credits) to trust on its own.
+  const isCloudflare =
+    s.includes("cf-browser-verification") ||
+    s.includes("just a moment") ||
+    s.includes("checking your browser before accessing") ||
+    s.includes("ddos protection by cloudflare") ||
+    (s.includes("attention required") && s.includes("cloudflare"));
+
+  // A captcha *widget* embedded in a normal, content-heavy page (e.g. a contact
+  // form) is not a block. A full-page captcha *challenge* is short and has
+  // almost no real content besides the challenge itself. Use page length as a
+  // proxy to tell the two apart, unless we see explicit challenge wording.
+  const textLength = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().length;
+  const isSmallPage = textLength < 1000;
+  const hasExplicitCaptchaChallenge =
+    s.includes("verify you are human") ||
+    s.includes("please complete the security check") ||
+    s.includes("captcha-delivery.com");
+  const hasGenericCaptchaTerm = s.includes("captcha") || s.includes("hcaptcha") || s.includes("recaptcha");
+  const isCaptcha = hasExplicitCaptchaChallenge || (isSmallPage && hasGenericCaptchaTerm);
+
+  const detected = statusBlocked || isCloudflare || isCaptcha;
+  const type = isCloudflare ? "cloudflare" : isCaptcha ? "captcha" : statusBlocked ? `http_${status}` : "unknown";
+
+  return { detected, type, status: Number(status) || 0 };
 }
 
 async function fetchText(url, timeoutMs = 30000) {

@@ -16,6 +16,10 @@ latest
 .env.*
 !.env.example
 
+# Local branding config (may contain client logo/name)
+branding.json
+!branding.example.json
+
 # Browser-saved sitemap exports and local XML fixtures
 *.xml
 !example-*.xml

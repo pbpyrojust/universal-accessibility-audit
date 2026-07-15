@@ -145,7 +145,7 @@ function main() {
   const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
   if (!args["urls-file"]) {
-    phaseHeader(1, 4, 'Build URL list from sitemap', '🗺️');
+    phaseHeader(1, 5, 'Build URL list from sitemap', '🗺️');
     const stepStart = Date.now();
     const buildArgs = ["--out", urlsFile];
     if (site) buildArgs.push("--site", site);
@@ -163,7 +163,7 @@ function main() {
     }
     phaseDone('URLs discovered', Date.now() - stepStart);
   } else {
-    phaseHeader(1, 4, 'Using provided URL file', '📄');
+    phaseHeader(1, 5, 'Using provided URL file', '📄');
     console.log(`    ${c.dim}File:${c.reset} ${urlsFile}`);
   }
 
@@ -184,7 +184,7 @@ function main() {
     }
   }
 
-  phaseHeader(2, 4, 'Accessibility + Agentic Lighthouse scan', '🔍');
+  phaseHeader(2, 5, 'Accessibility + Agentic Lighthouse scan', '🔍');
   const scanStepStart = Date.now();
   const auditArgs = [
     "--urls-file", urlsFile,
@@ -219,14 +219,14 @@ function main() {
   }
   phaseDone('Scan complete', Date.now() - scanStepStart);
 
-  phaseHeader(3, 4, 'Generate Google Docs-ready report', '📝');
+  phaseHeader(3, 5, 'Generate Google Docs-ready report', '📝');
   const reportStepStart = Date.now();
   const repArgs = ["--run-dir", outDir];
   if (site) repArgs.push("--site", site);
   runNodeScript(path.resolve("scripts/generate-google-doc-report.mjs"), repArgs);
   phaseDone('Report generated', Date.now() - reportStepStart);
 
-  phaseHeader(4, 4, 'Generate GitHub ticket backlog CSV', '🎫');
+  phaseHeader(4, 5, 'Generate GitHub ticket backlog CSV', '🎫');
   const ticketStepStart = Date.now();
   if (!args["no-tickets"]) {
     runNodeScript(path.resolve("scripts/generate-ticket-csv.mjs"), ["--run-dir", outDir, "--sheet-id", sheetId, "--sheet-gid", sheetGid]);
@@ -234,6 +234,18 @@ function main() {
     console.log(`    ${c.dim}Skipped (--no-tickets)${c.reset}`);
   }
   phaseDone('Tickets generated', Date.now() - ticketStepStart);
+
+  phaseHeader(5, 5, 'Generate visual HTML/PDF dashboard', '📊');
+  const visualStepStart = Date.now();
+  if (!args["no-visual-report"]) {
+    const visualArgs = [path.resolve("scripts/generate-a11y-visual-report.mjs"), "--run-dir", outDir];
+    if (site) visualArgs.push("--site", site);
+    if (args["brand-config"]) visualArgs.push("--brand-config", args["brand-config"]);
+    runNodeScript(visualArgs[0], visualArgs.slice(1));
+  } else {
+    console.log(`    ${c.dim}Skipped (--no-visual-report)${c.reset}`);
+  }
+  phaseDone('Dashboard generated', Date.now() - visualStepStart);
 
   const totalElapsed = Date.now() - auditStartTime;
   console.log('');

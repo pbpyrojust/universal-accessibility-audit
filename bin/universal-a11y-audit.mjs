@@ -23,11 +23,12 @@ Usage:
   universal-a11y-audit <command> [options]
 
 Commands:
-  audit                 Full workflow: build URLs, scan, summary, ticket/backlog CSV
+  audit                 Full workflow: build URLs, scan, summary, ticket/backlog CSV, visual dashboard
   build-urls            Build a URL list from sitemap discovery
   scan                  Run the Playwright + axe-core + agentic Lighthouse scan
   report                Generate the docs-ready Markdown summary report
   tickets               Generate the GitHub/backlog ticket CSV
+  visual-report         Generate the branded HTML dashboard + PDF report
   sitemap-xml-to-urls   Convert a browser-saved sitemap XML file into urls.txt
   help                  Show this help
   version               Show package version
@@ -35,11 +36,13 @@ Commands:
 Examples:
   universal-a11y-audit audit --site https://www.example.com
   universal-a11y-audit audit --site https://www.example.com --slow --respect-robots --cloudflare-aware
+  universal-a11y-audit audit --site https://www.example.com --brand-config ./branding.json
   universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
   universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
   universal-a11y-audit scan --crawl --start https://www.example.com --max-pages 50 --out-dir ./reports
   universal-a11y-audit report --run-dir ./reports/<run-id> --site https://www.example.com
   universal-a11y-audit tickets --run-dir ./reports/<run-id>
+  universal-a11y-audit visual-report --run-dir ./reports/<run-id> --site https://www.example.com --brand-config ./branding.json
   universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
   universal-a11y-audit audit --site https://staging.example.com --http-username myuser --http-password mypass
   universal-a11y-audit audit --site https://staging.example.com --auth-config ./auth.local.json
@@ -53,6 +56,8 @@ Primary outputs:
   a11y-image-alts.csv              Image alt text inventory
   agentic-lighthouse-scores.csv    Agentic category scores and findings
   agentic-lighthouse-report.json   Full agentic scoring JSON
+  a11y-dashboard.html              Branded visual HTML dashboard
+  a11y-dashboard.pdf               PDF version of the dashboard
 
 Agentic Lighthouse categories:
   WebMCP Protocol, Accessibility Trees, Semantic Data Formatting, Layout Stability
@@ -80,6 +85,9 @@ switch (command) {
     break;
   case "tickets":
     run("generate-ticket-csv.mjs", rest);
+    break;
+  case "visual-report":
+    run("generate-a11y-visual-report.mjs", rest);
     break;
   case "sitemap-xml-to-urls":
     run("convert-sitemap-xml-to-urls.mjs", rest);
