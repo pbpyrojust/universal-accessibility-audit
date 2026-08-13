@@ -17,6 +17,15 @@
 import fs from "node:fs";
 import path from "node:path";
 
+const c = {
+  reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
+  brightRed: '\x1b[91m', brightGreen: '\x1b[92m', brightYellow: '\x1b[93m',
+  brightMagenta: '\x1b[95m', brightCyan: '\x1b[96m', cyan: '\x1b[36m',
+};
+function statusMsg(icon, color, msg) {
+  console.log(`    ${color}${icon}${c.reset} ${msg}`);
+}
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
@@ -141,6 +150,20 @@ function shouldKeepUrl(url, includePaths, excludePaths) {
   return true;
 }
 
+function urlPathDepth(url) {
+  try {
+    const u = new URL(url);
+    return u.pathname.split("/").filter(Boolean).length;
+  } catch {
+    return Infinity;
+  }
+}
+
+function shouldKeepPathDepth(url, maxPathDepth) {
+  if (!Number.isFinite(maxPathDepth)) return true;
+  return urlPathDepth(url) <= maxPathDepth;
+}
+
 function selectContentSitemaps(urls, includeSitemaps, includeAllSitemaps = false) {
   if (includeAllSitemaps) {
     return urls;
@@ -232,6 +255,8 @@ async function main() {
   );
   const includeSitemaps = splitCsvish(args["include-sitemaps"]);
   const includeAllSitemaps = Boolean(args["include-all-sitemaps"]);
+  const maxPathDepth = args["max-path-depth"] ? Number(args["max-path-depth"]) : (args["top-level"] ? 1 : Infinity);
+  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
 
   if (!site && !args["sitemap-url"]) {
     console.error("ERROR: Provide --site https://www.example.com or --sitemap-url https://www.example.com/sitemap.xml");
@@ -291,9 +316,13 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Using sitemap: ${selectedTopLevel}`);
+  const discoveryStart = Date.now();
+  statusMsg('🗺️', c.brightCyan, `Using sitemap: ${c.bold}${selectedTopLevel}${c.reset}`);
   if (crawlDelay !== null) {
-    console.log(`robots.txt Crawl-delay detected: ${crawlDelay}s`);
+    statusMsg('⏳', c.cyan, `robots.txt Crawl-delay detected: ${c.bold}${crawlDelay}s${c.reset}`);
+  }
+  if (Number.isFinite(maxPathDepth)) {
+    statusMsg('↕', c.brightYellow, `Keeping URLs at path depth ${c.bold}${maxPathDepth}${c.reset} or shallower.`);
   }
 
   let urls = [];
@@ -304,34 +333,46 @@ async function main() {
   } else if (topLevelType === "sitemapindex") {
     const sitemapUrls = extractLocs(topLevelXml);
     const selected = selectContentSitemaps(sitemapUrls, includeSitemaps, includeAllSitemaps);
-    console.log(`Found ${sitemapUrls.length} sitemaps in index; selected ${selected.length}`);
+    statusMsg('📚', c.brightCyan, `Found ${c.bold}${sitemapUrls.length}${c.reset} sitemap(s) in index; selected ${c.bold}${selected.length}${c.reset} for URL discovery`);
+    let processed = 0;
     for (const sm of selected) {
-      console.log(`Processing ${sm}`);
+      processed++;
       const details = await fetchText(sm);
       if (detectCloudflareOrBot(details.text, details.status)) {
-        console.warn(`Skipping protected sitemap: ${sm}`);
+        statusMsg('⚠', c.brightYellow, `[${processed}/${selected.length}] Skipping protected sitemap: ${sm}`);
         continue;
       }
       if (!details.ok || !details.text) continue;
       const type = detectRootType(details.text);
+      let foundHere = 0;
       if (type === "urlset") {
-        urls.push(...extractLocs(details.text));
+        const locs = extractLocs(details.text);
+        urls.push(...locs);
+        foundHere = locs.length;
       } else if (type === "sitemapindex") {
         // nested index, collect locs but do not recurse deeply
-        urls.push(...extractLocs(details.text));
+        const locs = extractLocs(details.text);
+        urls.push(...locs);
+        foundHere = locs.length;
       }
+      statusMsg('🔎', c.cyan, `[${processed}/${selected.length}] ${sm} ${c.dim}→${c.reset} +${foundHere} ${c.dim}(running total:${c.reset} ${c.brightGreen}${urls.length}${c.reset}${c.dim}, elapsed:${c.reset} ${c.brightYellow}${Math.round((Date.now() - discoveryStart) / 1000)}s${c.dim})${c.reset}`);
     }
   }
 
   urls = urls
     .map((u) => normalizeUrl(u, site || undefined))
-    .filter((u) => shouldKeepUrl(u, includePaths, excludePaths));
+    .filter((u) => shouldKeepUrl(u, includePaths, excludePaths))
+    .filter((u) => shouldKeepPathDepth(u, maxPathDepth));
 
   urls = Array.from(new Set(urls));
+  if (batchSize > 0 && urls.length > batchSize) {
+    urls = urls.slice(0, batchSize);
+    statusMsg('📦', c.brightYellow, `Batch cap applied: keeping first ${c.bold}${batchSize}${c.reset}${c.brightYellow} URL(s).`);
+  }
 
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   fs.writeFileSync(path.resolve(out), urls.join("\n") + (urls.length ? "\n" : ""), "utf8");
-  console.log(`✔ Wrote ${urls.length} URLs to ${path.resolve(out)}`);
+  statusMsg('✔', c.brightGreen, `Wrote ${c.bold}${urls.length}${c.reset} URL(s) to ${c.dim}${path.resolve(out)}${c.reset} ${c.dim}(discovery took ${Math.round((Date.now() - discoveryStart) / 1000)}s)${c.reset}`);
 }
 
 main().catch((e) => {

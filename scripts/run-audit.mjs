@@ -12,6 +12,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const scriptDir = __dirname;
 
 const c = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -36,6 +41,9 @@ function phaseHeader(step, total, label, icon = '▸') {
 }
 function phaseDone(label, elapsed) {
   console.log(`    ${c.brightGreen}✔${c.reset} ${label} ${c.dim}in${c.reset} ${c.brightYellow}${formatDuration(elapsed)}${c.reset}`);
+}
+function statusMsg(icon, color, msg) {
+  console.log(`    ${color}${icon}${c.reset} ${msg}`);
 }
 
 function parseArgs(argv) {
@@ -67,6 +75,10 @@ function runNodeScript(scriptPath, scriptArgs) {
     stdio: "inherit",
     env: process.env,
   });
+}
+
+function packageScript(scriptName) {
+  return path.join(scriptDir, scriptName);
 }
 
 
@@ -109,7 +121,7 @@ function printBotNotice(site) {
   console.warn("  1) Retry with --slow and --respect-robots");
   console.warn("  2) Use --sitemap-url with a quoted URL if needed");
   console.warn("  3) Save sitemap XML in your browser and convert it with:");
-  console.warn("     node scripts/convert-sitemap-xml-to-urls.mjs --input ./saved-sitemap.xml --out ./urls.txt");
+  console.warn("     universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./urls.txt");
   console.warn("  4) Audit using --urls-file ./urls.txt");
   console.warn("Tip: Wait a while before retrying to avoid triggering additional rate limits.\n");
 }
@@ -142,7 +154,14 @@ function main() {
   }
 
   const urlsFile = args["urls-file"] ? path.resolve(args["urls-file"]) : path.join(outDir, "urls.txt");
-  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
+  const quickMode = Boolean(args["quick"]);
+  const liteMode = Boolean(args["lite"] || quickMode);
+  const topLevelMode = Boolean(args["top-level"] || quickMode);
+  const maxPathDepth = args["max-path-depth"] ? Number(args["max-path-depth"]) : (topLevelMode ? 1 : Infinity);
+  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : (quickMode ? 25 : liteMode ? 40 : 0);
+  if (quickMode) statusMsg('⚡', c.brightYellow, `Quick mode enabled: top-level pages, lite scan settings, capped at ${c.bold}${batchSize}${c.reset} page(s).`);
+  else if (liteMode) statusMsg('⚡', c.brightYellow, `Lite mode enabled: capping this run at ${c.bold}${batchSize}${c.reset} page(s).`);
+  if (Number.isFinite(maxPathDepth)) statusMsg('↕', c.brightYellow, `Path-depth cap enabled: scanning URLs at depth ${c.bold}${maxPathDepth}${c.reset} or shallower.`);
 
   if (!args["urls-file"]) {
     phaseHeader(1, 5, 'Build URL list from sitemap', '🗺️');
@@ -155,8 +174,10 @@ function main() {
     if (args["include-sitemaps"]) buildArgs.push("--include-sitemaps", args["include-sitemaps"]);
     if (args["include-all-sitemaps"]) buildArgs.push("--include-all-sitemaps");
     if (batchSize > 0) buildArgs.push("--batch-size", String(batchSize));
+    if (Number.isFinite(maxPathDepth)) buildArgs.push("--max-path-depth", String(maxPathDepth));
+    if (topLevelMode) buildArgs.push("--top-level");
 
-    const build = runNodeScript(path.resolve("scripts/build-urls-from-sitemap.mjs"), buildArgs);
+    const build = runNodeScript(packageScript("build-urls-from-sitemap.mjs"), buildArgs);
     if (build.status !== 0) {
       if (site) printBotNotice(site);
       process.exit(build.status || 1);
@@ -175,13 +196,23 @@ function main() {
       if (urls.length > batchSize) {
         const trimmed = urls.slice(0, batchSize);
         fs.writeFileSync(urlsFile, trimmed.join("\n") + "\n", "utf8");
-        console.log(`ℹ --batch-size enabled. Trimmed URL list from ${urls.length} to ${trimmed.length} URL(s) for this run.`);
+        statusMsg('📦', c.brightYellow, `--batch-size enabled. Trimmed URL list from ${c.bold}${urls.length}${c.reset}${c.brightYellow} to ${c.bold}${trimmed.length}${c.reset}${c.brightYellow} URL(s) for this run.${c.reset}`);
       } else {
-        console.log(`ℹ --batch-size enabled, but URL list already has ${urls.length} URL(s).`);
+        statusMsg('📦', c.cyan, `--batch-size enabled, but URL list already has ${c.bold}${urls.length}${c.reset} URL(s).`);
       }
     } catch (e) {
       console.warn(`WARNING: Could not apply --batch-size to ${urlsFile}: ${String(e?.message || e)}`);
     }
+  }
+
+  let totalUrlsForRun = 0;
+  try {
+    totalUrlsForRun = fs.readFileSync(urlsFile, "utf8").split(/\r?\n/g).map((s) => s.trim()).filter(Boolean).length;
+  } catch {}
+  if (totalUrlsForRun > 0) {
+    const estPerPage = args["slow"] ? 15000 : 8000;
+    statusMsg('📄', c.brightGreen, `${c.bold}${totalUrlsForRun}${c.reset} URL(s) queued for this audit run.`);
+    statusMsg('⏱️', c.brightMagenta, `Estimated total run time: ${c.bold}~${formatDuration(totalUrlsForRun * estPerPage)}${c.reset} ${c.dim}(scan + reports)${c.reset}`);
   }
 
   phaseHeader(2, 5, 'Accessibility + Agentic Lighthouse scan', '🔍');
@@ -192,14 +223,21 @@ function main() {
     "--run-id", runId,
     "--sheet-id", sheetId,
     "--sheet-gid", sheetGid,
+    "--sub-step",
   ];
   if (site) auditArgs.push("--start", site);
+  if (args["include-path"]) auditArgs.push("--include-path", args["include-path"]);
+  if (args["exclude-path"]) auditArgs.push("--exclude-path", args["exclude-path"]);
   if (args["slow"]) auditArgs.push("--slow");
   if (args["respect-robots"]) auditArgs.push("--respect-robots");
   if (args["cloudflare-aware"]) auditArgs.push("--cloudflare-aware");
   if (args["retries"]) auditArgs.push("--retries", args["retries"]);
   if (args["backoff-ms"]) auditArgs.push("--backoff-ms", args["backoff-ms"]);
   if (args["crawl-delay-ms"]) auditArgs.push("--crawl-delay-ms", args["crawl-delay-ms"]);
+  if (quickMode) auditArgs.push("--quick");
+  else if (liteMode) auditArgs.push("--lite");
+  if (Number.isFinite(maxPathDepth)) auditArgs.push("--max-path-depth", String(maxPathDepth));
+  if (topLevelMode) auditArgs.push("--top-level");
   if (args["http-username"]) auditArgs.push("--http-username", args["http-username"]);
   if (args["http-password"]) auditArgs.push("--http-password", args["http-password"]);
   if (args["auth-config"]) auditArgs.push("--auth-config", args["auth-config"]);
@@ -212,7 +250,7 @@ function main() {
   if (args["ready-selector"]) auditArgs.push("--ready-selector", args["ready-selector"]);
   if (args["post-login-wait-ms"]) auditArgs.push("--post-login-wait-ms", args["post-login-wait-ms"]);
 
-  const audit = runNodeScript(path.resolve("scripts/a11y-audit.mjs"), auditArgs);
+  const audit = runNodeScript(packageScript("a11y-audit.mjs"), auditArgs);
   if (audit.status !== 0) {
     if (site) printBotNotice(site);
     process.exit(audit.status || 1);
@@ -223,13 +261,13 @@ function main() {
   const reportStepStart = Date.now();
   const repArgs = ["--run-dir", outDir];
   if (site) repArgs.push("--site", site);
-  runNodeScript(path.resolve("scripts/generate-google-doc-report.mjs"), repArgs);
+  runNodeScript(packageScript("generate-google-doc-report.mjs"), repArgs);
   phaseDone('Report generated', Date.now() - reportStepStart);
 
   phaseHeader(4, 5, 'Generate GitHub ticket backlog CSV', '🎫');
   const ticketStepStart = Date.now();
   if (!args["no-tickets"]) {
-    runNodeScript(path.resolve("scripts/generate-ticket-csv.mjs"), ["--run-dir", outDir, "--sheet-id", sheetId, "--sheet-gid", sheetGid]);
+    runNodeScript(packageScript("generate-ticket-csv.mjs"), ["--run-dir", outDir, "--sheet-id", sheetId, "--sheet-gid", sheetGid]);
   } else {
     console.log(`    ${c.dim}Skipped (--no-tickets)${c.reset}`);
   }
@@ -238,7 +276,7 @@ function main() {
   phaseHeader(5, 5, 'Generate visual HTML/PDF dashboard', '📊');
   const visualStepStart = Date.now();
   if (!args["no-visual-report"]) {
-    const visualArgs = [path.resolve("scripts/generate-a11y-visual-report.mjs"), "--run-dir", outDir];
+    const visualArgs = [packageScript("generate-a11y-visual-report.mjs"), "--run-dir", outDir];
     if (site) visualArgs.push("--site", site);
     if (args["brand-config"]) visualArgs.push("--brand-config", args["brand-config"]);
     runNodeScript(visualArgs[0], visualArgs.slice(1));

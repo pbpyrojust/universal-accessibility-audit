@@ -6,10 +6,12 @@
     "build:urls": "node scripts/build-urls-from-sitemap.mjs --site https://www.example.com --out scripts/urls.txt",
     "audit:urls": "node scripts/a11y-audit.mjs --urls-file scripts/urls.txt --out-dir reports",
     "audit": "node scripts/run-audit.mjs --site https://www.example.com",
+    "audit:quick": "node scripts/run-audit.mjs --site https://www.example.com --quick",
     "audit:crawl": "node scripts/a11y-audit.mjs --crawl --start https://www.example.com --max-pages 50 --out-dir reports",
+    "audit:crawl:lite": "node scripts/a11y-audit.mjs --crawl --start https://www.example.com --lite --out-dir reports",
     "report": "node scripts/generate-google-doc-report.mjs --run-dir reports/latest",
     "report:visual": "node scripts/generate-a11y-visual-report.mjs --run-dir reports/latest",
-    "prepare": "husky",
+    "prepare": "node scripts/prepare-husky.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "sitemap:xml-to-urls": "node scripts/convert-sitemap-xml-to-urls.mjs",
     "audit:slow": "node scripts/run-audit.mjs --slow --respect-robots --cloudflare-aware",
@@ -23,7 +25,7 @@
     "fast-xml-parser": "^5.3.3",
     "playwright": "^1.57.0"
   },
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "CLI toolkit for WCAG accessibility audits and Agentic Lighthouse scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs.",
   "author": "Justin Adams (https://justwhat.net)",
   "homepage": "https://github.com/pbpyrojust/universal-accessibility-audit#readme",
@@ -66,8 +68,9 @@
   },
   "files": [
     "bin/",
-    "scripts/",
+    "scripts/*.mjs",
     "templates/",
+    "auth-config.example.json",
     "branding.example.json",
     "README.md",
     "LICENSE"

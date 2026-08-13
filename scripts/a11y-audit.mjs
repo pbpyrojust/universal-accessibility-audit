@@ -66,14 +66,24 @@ function rainbowBar(filled, empty) {
 const spinnerFrames = ['◐', '◓', '◑', '◒'];
 let spinnerIdx = 0;
 function spinner() { return rainbowColors[spinnerIdx % rainbowColors.length] + spinnerFrames[spinnerIdx++ % spinnerFrames.length] + c.reset; }
+function clearProgressLine() { process.stdout.write('\r\x1b[K'); }
+// `total` may be Infinity/0/undefined for indeterminate work (e.g. crawling with no --max-pages) —
+// falls back to a spinner + running count with no bar/percentage rather than dividing by a
+// non-finite/zero total (which previously rendered a permanently-empty 0% bar).
 function progressLine(current, total, label, extra = '') {
-  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  const hasTotal = Number.isFinite(total) && total > 0;
+  const done = hasTotal && current >= total;
+  const spin = done ? `${c.brightGreen}✔${c.reset}` : spinner();
+  if (!hasTotal) {
+    process.stdout.write(`\r  ${spin} ${c.bold}${current}${c.reset} ${c.dim}${label}${c.reset}${extra ? ' ' + extra : ''}\x1b[K`);
+    return;
+  }
+  const pct = Math.min(100, Math.round((current / total) * 100));
   const barWidth = 30;
-  const filled = total > 0 ? Math.round((current / total) * barWidth) : 0;
+  const filled = Math.min(barWidth, Math.round((current / total) * barWidth));
   const bar = rainbowBar(filled, barWidth - filled);
   const pctStr = pct === 100 ? `${c.brightGreen}${pct}%${c.reset}` : `${c.brightCyan}${pct}%${c.reset}`;
-  const spin = current < total ? spinner() : `${c.brightGreen}✔${c.reset}`;
-  process.stdout.write(`\r  ${spin} ${bar} ${c.bold}${current}${c.reset}${c.dim}/${total}${c.reset} ${pctStr} ${c.dim}${label}${c.reset}${extra ? ' ' + extra : ''}`.padEnd(160) + '\r');
+  process.stdout.write(`\r  ${spin} ${bar} ${c.bold}${current}${c.reset}${c.dim}/${total}${c.reset} ${pctStr} ${c.dim}${label}${c.reset}${extra ? ' ' + extra : ''}\x1b[K`);
 }
 function phaseHeader(label, icon = '▸') {
   console.log('');
@@ -102,6 +112,57 @@ function loadUrlsFromFile(filePath) {
 
 function isSameOrigin(u, origin) {
   try { return new URL(u).origin === origin; } catch { return false; }
+}
+
+function splitCsvish(v) {
+  return String(v || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function matchesAnyPath(url, filters) {
+  if (!filters.length) return false;
+  try {
+    const u = new URL(url);
+    const target = `${u.pathname}${u.search || ""}`;
+    return filters.some((f) => target.includes(f));
+  } catch {
+    return false;
+  }
+}
+
+function urlPathDepth(url) {
+  try {
+    const u = new URL(url);
+    return u.pathname.split("/").filter(Boolean).length;
+  } catch {
+    return Infinity;
+  }
+}
+
+function shouldKeepPathDepth(url, maxPathDepth) {
+  if (!Number.isFinite(maxPathDepth)) return true;
+  return urlPathDepth(url) <= maxPathDepth;
+}
+
+// Collapses per-record path segments (ids, hashes, slugs with digits) to `:id` so that
+// e.g. /participants/mypage/1178067/2026 and /participants/mypage/1186529/2026 are treated
+// as the same URL "template" — lets us cap how many pages of a given template get crawled
+// instead of following every uniquely-generated fundraiser/event/profile page.
+function urlPatternKey(u) {
+  try {
+    const url = new URL(u);
+    const segments = url.pathname.split("/").filter(Boolean).map((seg) => {
+      if (/^\d+$/.test(seg)) return ":id";
+      if (/^[a-f0-9]{8,}$/i.test(seg)) return ":id";
+      if (seg.length > 10 && /\d/.test(seg) && /[a-zA-Z]/.test(seg)) return ":id";
+      return seg;
+    });
+    return `${url.origin}/${segments.join("/")}`;
+  } catch {
+    return u;
+  }
 }
 
 function normalizeWhitespace(s) { return String(s || "").replace(/\s+/g, " ").trim(); }
@@ -194,33 +255,73 @@ async function buildRobotsMatcher(startUrl) {
 }
 
 async function crawlInternalLinks(page, startUrl, maxPages, opts = {}) {
-  const { isAllowedUrl = null, slow = false, crawlDelayMs = 0 } = opts;
+  const {
+    isAllowedUrl = null,
+    slow = false,
+    crawlDelayMs = 0,
+    maxDepth = Infinity,
+    excludePaths = [],
+    includePaths = [],
+    maxPerPattern = Infinity,
+    navTimeoutMs = 60000,
+    maxPathDepth = Infinity,
+  } = opts;
   const origin = new URL(startUrl).origin;
-  const queue = [normalizeUrl(startUrl)];
-  const seen = new Set(queue);
+  const startNormalized = normalizeUrl(startUrl);
+  const queue = [{ url: startNormalized, depth: 0 }];
+  const seen = new Set([startNormalized]);
+  const patternCounts = new Map([[urlPatternKey(startNormalized), 1]]);
+  const crawlStarted = Date.now();
+  let visited = 0;
+  let errorCount = 0;
+  let skippedByPattern = 0;
+  let skippedByPath = 0;
 
   while (queue.length && seen.size < maxPages) {
-    const current = queue.shift();
+    const { url: current, depth } = queue.shift();
+    visited++;
+    let newLinks = 0;
     try {
-      await page.goto(current, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: 60000 });
+      await page.goto(current, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: navTimeoutMs });
       if (crawlDelayMs > 0) await sleep(crawlDelayMs);
-      const hrefs = await page.$$eval("a[href]", (as) => as.map((a) => a.getAttribute("href")).filter(Boolean));
-      for (const href of hrefs) {
-        let abs;
-        try { abs = new URL(href, current).toString(); } catch { continue; }
-        abs = normalizeUrl(abs);
-        if (!isSameOrigin(abs, origin)) continue;
-        const u = new URL(abs);
-        const p = u.pathname.toLowerCase();
-        if (p.endsWith(".pdf") || p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".zip")) continue;
-        if (isAllowedUrl && !isAllowedUrl(abs)) continue;
-        if (!seen.has(abs) && seen.size < maxPages) {
+      if (depth < maxDepth) {
+        const hrefs = await page.$$eval("a[href]", (as) => as.map((a) => a.getAttribute("href")).filter(Boolean));
+        for (const href of hrefs) {
+          let abs;
+          try { abs = new URL(href, current).toString(); } catch { continue; }
+          abs = normalizeUrl(abs);
+          if (!isSameOrigin(abs, origin)) continue;
+          const u = new URL(abs);
+          const p = u.pathname.toLowerCase();
+          if (p.endsWith(".pdf") || p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".zip")) continue;
+          if (isAllowedUrl && !isAllowedUrl(abs)) continue;
+          if (excludePaths.length && matchesAnyPath(abs, excludePaths)) { skippedByPath++; continue; }
+          if (includePaths.length && !matchesAnyPath(abs, includePaths)) { skippedByPath++; continue; }
+          if (!shouldKeepPathDepth(abs, maxPathDepth)) { skippedByPath++; continue; }
+          if (seen.has(abs) || seen.size >= maxPages) continue;
+          const key = urlPatternKey(abs);
+          const patternCount = patternCounts.get(key) || 0;
+          if (patternCount >= maxPerPattern) { skippedByPattern++; continue; }
+          patternCounts.set(key, patternCount + 1);
           seen.add(abs);
-          queue.push(abs);
+          queue.push({ url: abs, depth: depth + 1 });
+          newLinks++;
         }
       }
-    } catch {}
+    } catch (e) {
+      errorCount++;
+      clearProgressLine();
+      console.log(`    ${c.brightRed}✘${c.reset} ${c.dim}[${visited}]${c.reset} ${decodeUrlForDisplay(current)} ${c.dim}|${c.reset} ${c.brightRed}${String(e?.message || e).slice(0, 100)}${c.reset}`);
+    }
+    const shortUrl = decodeUrlForDisplay(current).length > 60 ? decodeUrlForDisplay(current).slice(0, 57) + '...' : decodeUrlForDisplay(current);
+    const extra = `${c.dim}queue:${c.reset} ${c.brightYellow}${queue.length}${c.reset} ${c.dim}·${c.reset} elapsed ${c.brightYellow}${formatElapsed(crawlStarted)}${c.reset}${newLinks ? ` ${c.dim}·${c.reset} +${newLinks} new` : ''} ${c.dim}·${c.reset} ${shortUrl}`;
+    progressLine(seen.size, maxPages, 'pages found', extra);
   }
+  clearProgressLine();
+  const skipParts = [];
+  if (skippedByPattern) skipParts.push(`${skippedByPattern} skipped (per-pattern cap)`);
+  if (skippedByPath) skipParts.push(`${skippedByPath} skipped (path filter)`);
+  statusMsg('🗺️', c.brightCyan, `Crawl finished: ${c.bold}${seen.size}${c.reset} pages found${errorCount ? `, ${c.brightRed}${errorCount} errors${c.reset}` : ''}${skipParts.length ? `, ${c.dim}${skipParts.join(', ')}${c.reset}` : ''} ${c.dim}in ${formatElapsed(crawlStarted)}${c.reset}`);
   return Array.from(seen);
 }
 
@@ -789,9 +890,17 @@ async function main() {
   const cfAware = Boolean(args["cloudflare-aware"]);
   const retries = args["retries"] ? Number(args["retries"]) : (slowMode ? 2 : 1);
   const backoffMs = args["backoff-ms"] ? Number(args["backoff-ms"]) : (slowMode ? 8000 : 3000);
-  const maxPages = args["max-pages"] ? Number(args["max-pages"]) : 50;
+  const quickMode = Boolean(args["quick"]);
+  const liteMode = Boolean(args["lite"] || quickMode);
+  const maxPages = args["max-pages"] ? Number(args["max-pages"]) : (liteMode ? 40 : Infinity);
+  const maxDepth = args["max-depth"] ? Number(args["max-depth"]) : (liteMode ? 2 : Infinity);
+  const maxPerPattern = args["max-per-pattern"] ? Number(args["max-per-pattern"]) : (liteMode ? 3 : Infinity);
+  const navTimeoutMs = args["nav-timeout-ms"] ? Number(args["nav-timeout-ms"]) : (liteMode ? 20000 : 60000);
+  const maxPathDepth = args["max-path-depth"] ? Number(args["max-path-depth"]) : (args["top-level"] || quickMode ? 1 : Infinity);
+  const excludePaths = splitCsvish(args["exclude-path"]);
+  const includePaths = splitCsvish(args["include-path"]);
   const respectRobots = Boolean(args["respect-robots"]);
-  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : 0;
+  const batchSize = args["batch-size"] ? Number(args["batch-size"]) : (liteMode ? 40 : 0);
   const auth = getAuthSettings(args);
 
   let robotsCfg = { isAllowedUrl: null, crawlDelayMs: 0 };
@@ -799,22 +908,31 @@ async function main() {
   const crawlDelayMs = args["crawl-delay-ms"] ? Number(args["crawl-delay-ms"]) : (robotsCfg.crawlDelayMs || (slowMode ? 1500 : 0));
   const hasAuth = Boolean(args["http-username"] || args["http-password"] || args["login-url"] || args["username"] || args["password"] || args["auth-config"] || process.env.A11Y_HTTP_USERNAME || process.env.A11Y_HTTP_PASSWORD || process.env.A11Y_LOGIN_USERNAME || process.env.A11Y_LOGIN_PASSWORD);
 
-  console.log('');
-  console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
-  console.log(`  ${rainbow('║')}  ${c.bold}${c.brightCyan}♿ Universal Accessibility Audit${c.reset}                       ${rainbow('║')}`);
-  console.log(`  ${rainbow('║')}  ${c.dim}WCAG · axe-core · Agentic Lighthouse · Alt Text${c.reset}        ${rainbow('║')}`);
-  console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
-  console.log('');
+  const subStep = Boolean(args["sub-step"]);
+
+  if (!subStep) {
+    console.log('');
+    console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
+    console.log(`  ${rainbow('║')}  ${c.bold}${c.brightCyan}♿ Universal Accessibility Audit${c.reset}                       ${rainbow('║')}`);
+    console.log(`  ${rainbow('║')}  ${c.dim}WCAG · axe-core · Agentic Lighthouse · Alt Text${c.reset}        ${rainbow('║')}`);
+    console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
+    console.log('');
+  }
 
   if (respectRobots) statusMsg('🤖', c.cyan, `Respecting ${c.bold}robots.txt${c.reset} Disallow rules.`);
   if (auth.httpCredentials) statusMsg('🔑', c.brightMagenta, `HTTP/basic auth credentials configured.`);
   if (auth.formAuth) statusMsg('🔐', c.brightMagenta, `Form-login auth config detected.`);
 
-  phaseHeader('URL Discovery', '🗺️');
+  if (!subStep) phaseHeader('URL Discovery', '🗺️');
   const discoveryStart = Date.now();
   let urls = [];
   if (args.crawl) {
-    statusMsg('🕷️', c.cyan, 'Browser crawl mode');
+    if (quickMode) statusMsg('⚡', c.brightYellow, `Quick mode: top-level pages, capped at ${c.bold}${maxPages}${c.reset}${c.brightYellow} pages, depth ${c.bold}${maxDepth}${c.reset}${c.brightYellow}, ${c.bold}${maxPerPattern}${c.reset}${c.brightYellow} page(s) per URL pattern, ${c.bold}${navTimeoutMs}ms${c.reset}${c.brightYellow} nav timeout.${c.reset}`);
+    else if (liteMode) statusMsg('⚡', c.brightYellow, `Lite mode: capping at ${c.bold}${maxPages}${c.reset}${c.brightYellow} pages, depth ${c.bold}${maxDepth}${c.reset}${c.brightYellow}, ${c.bold}${maxPerPattern}${c.reset}${c.brightYellow} page(s) per URL pattern, ${c.bold}${navTimeoutMs}ms${c.reset}${c.brightYellow} nav timeout.${c.reset}`);
+    statusMsg('🕷️', c.cyan, `Browser crawl mode${Number.isFinite(maxPages) ? ` (max ${maxPages} pages)` : ' (no page limit, crawling until no new links are found)'}${Number.isFinite(maxDepth) ? `, max depth ${maxDepth}` : ''}${Number.isFinite(maxPerPattern) ? `, max ${maxPerPattern}/URL pattern` : ''}`);
+    if (excludePaths.length) statusMsg('🚫', c.cyan, `Excluding paths containing: ${c.bold}${excludePaths.join(', ')}${c.reset}`);
+    if (includePaths.length) statusMsg('✅', c.cyan, `Including only paths containing: ${c.bold}${includePaths.join(', ')}${c.reset}`);
+    if (Number.isFinite(maxPathDepth)) statusMsg('↕', c.brightYellow, `Keeping URLs at path depth ${c.bold}${maxPathDepth}${c.reset} or shallower.`);
     const browser = await chromium.launch({ headless: true });
     const crawlContextOptions = {};
     if (auth.httpCredentials) crawlContextOptions.httpCredentials = auth.httpCredentials;
@@ -823,12 +941,25 @@ async function main() {
     if (auth.formAuth) {
       await maybePerformFormLogin(page, auth.formAuth, slowMode);
     }
-    urls = await crawlInternalLinks(page, startUrl, maxPages, { isAllowedUrl: robotsCfg.isAllowedUrl, slow: slowMode, crawlDelayMs });
+    urls = await crawlInternalLinks(page, startUrl, maxPages, {
+      isAllowedUrl: robotsCfg.isAllowedUrl,
+      slow: slowMode,
+      crawlDelayMs,
+      maxDepth,
+      excludePaths,
+      includePaths,
+      maxPerPattern,
+      navTimeoutMs,
+      maxPathDepth,
+    });
     await browser.close();
     statusMsg('🌐', c.brightGreen, `Crawled ${c.bold}${urls.length}${c.reset} URL(s)`);
   } else if (args["urls-file"]) {
     urls = loadUrlsFromFile(path.resolve(process.cwd(), args["urls-file"]));
     if (robotsCfg.isAllowedUrl) urls = urls.filter((u) => robotsCfg.isAllowedUrl(u));
+    if (excludePaths.length) urls = urls.filter((u) => !matchesAnyPath(u, excludePaths));
+    if (includePaths.length) urls = urls.filter((u) => matchesAnyPath(u, includePaths));
+    if (Number.isFinite(maxPathDepth)) urls = urls.filter((u) => shouldKeepPathDepth(u, maxPathDepth));
     statusMsg('📄', c.cyan, `URL file: ${c.bold}${args["urls-file"]}${c.reset} ${c.dim}(${urls.length} URLs)${c.reset}`);
   } else {
     urls = [startUrl];
@@ -838,7 +969,10 @@ async function main() {
   if (batchSize > 0 && urls.length > batchSize) {
     urls = urls.slice(0, batchSize);
   }
-  phaseDone('URLs ready', Date.now() - discoveryStart);
+  if (!args.crawl && Number.isFinite(maxPathDepth)) {
+    statusMsg('↕', c.brightYellow, `Path-depth cap active: scanning URLs at depth ${c.bold}${maxPathDepth}${c.reset} or shallower.`);
+  }
+  if (!subStep) phaseDone('URLs ready', Date.now() - discoveryStart);
 
   phaseHeader('Scan Configuration', '⚙️');
   console.log(`  ${c.brightMagenta}🎯${c.reset} ${c.bold}Start URL:${c.reset}  ${c.brightCyan}${startUrl}${c.reset}`);
@@ -1108,10 +1242,12 @@ async function main() {
 
   const totalElapsed = Date.now() - startedAt;
   console.log('');
-  console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
-  console.log(`  ${rainbow('║')}  ${c.bold}${c.brightGreen}✨ Scan Complete!${c.reset}                                     ${rainbow('║')}`);
-  console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
-  console.log('');
+  if (!subStep) {
+    console.log(`  ${rainbow('╔══════════════════════════════════════════════════════════╗')}`);
+    console.log(`  ${rainbow('║')}  ${c.bold}${c.brightGreen}✨ Scan Complete!${c.reset}                                     ${rainbow('║')}`);
+    console.log(`  ${rainbow('╚══════════════════════════════════════════════════════════╝')}`);
+    console.log('');
+  }
   console.log(`  ${c.brightCyan}📄${c.reset} ${c.bold}Pages${c.reset}         ${c.brightGreen}${urls.length}${c.reset}`);
   console.log(`  ${c.brightCyan}⚠️${c.reset}  ${c.bold}Violations${c.reset}    ${severityColor(meta.violationNodes, 50)}`);
   console.log(`  ${c.brightCyan}🖼️${c.reset}  ${c.bold}Images${c.reset}        ${c.brightGreen}${imageAltRows.length}${c.reset} ${c.dim}alt texts audited${c.reset}`);
@@ -1120,8 +1256,10 @@ async function main() {
   console.log(`  ${c.brightCyan}⏱️${c.reset}  ${c.bold}Time${c.reset}          ${c.brightYellow}${formatDuration(totalElapsed)}${c.reset}`);
   console.log(`  ${c.brightCyan}📁${c.reset} ${c.bold}Output${c.reset}        ${c.dim}${outDir}${c.reset}`);
   console.log('');
-  console.log(`  ${rainbow('★ ★ ★')} ${c.dim}Happy auditing!${c.reset} ${rainbow('★ ★ ★')}`);
-  console.log('');
+  if (!subStep) {
+    console.log(`  ${rainbow('★ ★ ★')} ${c.dim}Happy auditing!${c.reset} ${rainbow('★ ★ ★')}`);
+    console.log('');
+  }
 }
 
 main().catch((e) => {

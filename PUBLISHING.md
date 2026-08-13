@@ -11,7 +11,7 @@ This repo is configured so you can:
 
 - **npm package:** `@pbpyrojust/universal-accessibility-audit`
 - **CLI commands:** `universal-a11y-audit`, `uaaudit`
-- **Current version:** `0.2.1`
+- **Current version:** see `package.json`
 
 ---
 
@@ -79,10 +79,10 @@ Because this is a **scoped public package**, `--access public` is required for t
 
 ## Set up automatic npm publishing from GitHub Actions
 
-This repo includes a workflow that publishes to npmjs.org on tags like:
+This repo includes `.github/workflows/publish-npm.yml`, which publishes to npmjs.org on tags like:
 
 ```text
-v0.2.1
+v0.2.11
 ```
 
 ### Recommended: npm trusted publishing
@@ -105,10 +105,14 @@ After that, future publishes can happen from GitHub Actions on version tags.
 ### 1) Bump the version
 Edit `package.json` or use your own version bump flow.
 
+```bash
+npm version patch --no-git-tag-version
+```
+
 ### 2) Commit and push main
 ```bash
 git add .
-git commit -m "Prepare v0.2.1 release"
+git commit -m "Prepare npm package release"
 git push origin main
 ```
 
@@ -116,8 +120,9 @@ git push origin main
 Use the version from `package.json`:
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+VERSION="$(node -p "require('./package.json').version")"
+git tag "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
 The npm publish workflow will run automatically.
@@ -126,17 +131,25 @@ The npm publish workflow will run automatically.
 
 ## Optional: publish to GitHub Packages later
 
-This repo also includes a GitHub Packages workflow.
+This repo also includes `.github/workflows/publish-github-packages.yml`.
 
 ### GitHub Packages registry
 ```text
 https://npm.pkg.github.com
 ```
 
+GitHub Packages has a few extra rules:
+
+- npm packages published there must be scoped, such as `@pbpyrojust/universal-accessibility-audit`
+- local publishing requires a classic GitHub personal access token
+- GitHub Actions can publish with `GITHUB_TOKEN` when the package is associated with this repository
+- first-published GitHub Packages may default to private visibility, so confirm the package visibility after the first publish if you want it public
+
 ### Trigger it with a tag
 ```bash
-git tag ghpkg-v0.2.1
-git push origin ghpkg-v0.2.1
+VERSION="$(node -p "require('./package.json').version")"
+git tag "ghpkg-v${VERSION}"
+git push origin "ghpkg-v${VERSION}"
 ```
 
 Or run it manually from GitHub Actions if you prefer.
@@ -158,7 +171,8 @@ git clone https://github.com/pbpyrojust/universal-accessibility-audit.git
 cd universal-accessibility-audit
 npm install
 npx playwright install --with-deps chromium
-node scripts/run-audit.mjs --site https://www.example.com
+universal-a11y-audit quick --site https://www.example.com
+universal-a11y-audit audit --site https://www.example.com
 ```
 
 ---
@@ -176,8 +190,9 @@ npm publish --access public
 git add .
 git commit -m "Prepare npm CLI package for release"
 git push origin main
-git tag v0.2.1
-git push origin v0.2.1
+VERSION="$(node -p "require('./package.json').version")"
+git tag "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
 After the first manual publish, switch to **trusted publishing** for future automated npm releases.

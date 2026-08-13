@@ -1,0 +1,10 @@
+{
+  "companyName": "JustWhat.net",
+  "logo": "./assets/logo.png",
+  "primaryColor": "#7c3aed",
+  "secondaryColor": "#111827",
+  "accentColor": "#22c55e",
+  "reportTitle": "Accessibility & WCAG Compliance Audit",
+  "author": "Justin Adams",
+  "footerText": "Confidential — Prepared by JustWhat.net"
+}

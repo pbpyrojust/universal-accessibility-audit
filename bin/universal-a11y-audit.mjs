@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
+const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 function run(script, args) {
   const scriptPath = path.join(root, "scripts", script);
@@ -24,6 +26,7 @@ Usage:
 
 Commands:
   audit                 Full workflow: build URLs, scan, summary, ticket/backlog CSV, visual dashboard
+  quick                 Fast representative workflow: top-level pages, lite timing, capped page count
   build-urls            Build a URL list from sitemap discovery
   scan                  Run the Playwright + axe-core + agentic Lighthouse scan
   report                Generate the docs-ready Markdown summary report
@@ -35,11 +38,15 @@ Commands:
 
 Examples:
   universal-a11y-audit audit --site https://www.example.com
+  universal-a11y-audit quick --site https://www.example.com
+  universal-a11y-audit audit --site https://www.example.com --top-level
   universal-a11y-audit audit --site https://www.example.com --slow --respect-robots --cloudflare-aware
   universal-a11y-audit audit --site https://www.example.com --brand-config ./branding.json
   universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
   universal-a11y-audit scan --urls-file ./reports/urls.txt --out-dir ./reports
   universal-a11y-audit scan --crawl --start https://www.example.com --max-pages 50 --out-dir ./reports
+  universal-a11y-audit scan --crawl --start https://www.example.com --lite --out-dir ./reports
+  universal-a11y-audit audit --site https://www.example.com --lite
   universal-a11y-audit report --run-dir ./reports/<run-id> --site https://www.example.com
   universal-a11y-audit tickets --run-dir ./reports/<run-id>
   universal-a11y-audit visual-report --run-dir ./reports/<run-id> --site https://www.example.com --brand-config ./branding.json
@@ -74,6 +81,9 @@ switch (command) {
   case "audit":
     run("run-audit.mjs", rest);
     break;
+  case "quick":
+    run("run-audit.mjs", ["--quick", ...rest]);
+    break;
   case "build-urls":
     run("build-urls-from-sitemap.mjs", rest);
     break;
@@ -100,7 +110,7 @@ switch (command) {
   case "version":
   case "--version":
   case "-v":
-    console.log("0.2.8");
+    console.log(pkg.version);
     break;
   default:
     console.error(`Unknown command: ${command}`);

@@ -2,9 +2,21 @@
 
 **Package:** `@pbpyrojust/universal-accessibility-audit`
 **CLI commands:** `universal-a11y-audit`, `uaaudit`
-**Version:** 0.2.8
+**Version:** 0.2.11
 
 A CLI toolkit for WCAG accessibility audits and browser-native AI readiness scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs. Built for development, staging, protected, and production sites.
+
+## Runtime expectations
+
+Full-site accessibility audits can take a long time. This tool opens pages in Chromium, runs axe-core, inventories image alt text, gathers browser-agent readiness signals, and writes multiple report formats. A large sitemap, crawl-heavy site, bot protection, slow staging server, or high retry settings can turn a run into hours instead of minutes.
+
+For a quick first pass, use `quick` or `--quick`. It scans only top-level URLs by default, applies lite timing limits, and caps the run at 25 pages unless you override `--batch-size`.
+
+```bash
+npm exec --package @pbpyrojust/universal-accessibility-audit -- universal-a11y-audit quick --site https://www.example.com
+```
+
+For exhaustive work, use `audit` and tune scope with `--batch-size`, `--include-path`, `--exclude-path`, `--top-level`, `--max-path-depth`, `--slow`, `--respect-robots`, and `--cloudflare-aware`.
 
 ## Features
 
@@ -44,7 +56,69 @@ npm install -g @pbpyrojust/universal-accessibility-audit
 npx playwright install --with-deps chromium
 ```
 
+Or run it without a global install:
+
+```bash
+npm exec --package @pbpyrojust/universal-accessibility-audit -- universal-a11y-audit quick --site https://www.example.com
+```
+
+## Use in project workflows
+
+Install it as a project dev dependency when you want accessibility audits to run from npm scripts, CI jobs, preview deployments, or release checks:
+
+```bash
+npm install --save-dev @pbpyrojust/universal-accessibility-audit
+npx playwright install chromium
+```
+
+Add scripts to your project's `package.json`:
+
+```json
+{
+  "scripts": {
+    "a11y:quick": "universal-a11y-audit quick --site https://www.example.com",
+    "a11y:full": "universal-a11y-audit audit --site https://www.example.com --respect-robots --batch-size 100"
+  }
+}
+```
+
+Then run:
+
+```bash
+npm run a11y:quick
+```
+
+In automated builds, pass a URL that exists during the job: a staging URL, preview deployment URL, or a localhost server started earlier in the workflow. The package audits a running site; it does not infer a target URL from the project automatically.
+
+### GitHub Actions example
+
+```yaml
+name: Accessibility Audit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run a11y:quick
+```
+
 ## Quick start
+
+Run a fast top-level pass:
+
+```bash
+universal-a11y-audit quick --site https://www.example.com
+```
 
 Run a full audit:
 
@@ -81,6 +155,10 @@ node scripts/run-audit.mjs --site <url> [options]
 | `--out-dir <path>` | Base output folder (default: `reports`) |
 | `--run-id <id>` | Explicit run folder name |
 | `--batch-size <n>` | Cap the number of URLs scanned in one run |
+| `--quick` | Fast first-pass preset: lite scan settings, top-level URLs, and a 25-page default cap |
+| `--lite` | Representative scan preset with smaller crawl/page limits |
+| `--top-level` | Keep only homepage and one-segment paths such as `/about` or `/contact` |
+| `--max-path-depth <n>` | Keep only URLs with path depth `n` or shallower; `1` is top-level |
 | `--slow` | Use more conservative navigation timing and retries |
 | `--respect-robots` | Respect `robots.txt` disallow rules during URL filtering/crawling |
 | `--cloudflare-aware` | Detect likely Cloudflare/WAF challenge pages and back off |
@@ -101,6 +179,12 @@ node scripts/run-audit.mjs --site <url> [options]
 ```bash
 # Full sitemap-based audit
 node scripts/run-audit.mjs --site https://www.example.com
+
+# Fast package-style first pass
+universal-a11y-audit quick --site https://www.example.com
+
+# Top-level pages only, but keep the full reporting workflow
+universal-a11y-audit audit --site https://www.example.com --top-level
 
 # Protected-site conservative scan
 node scripts/run-audit.mjs --site https://www.example.com --slow --respect-robots --cloudflare-aware
@@ -334,7 +418,56 @@ node scripts/a11y-audit.mjs --urls-file ./reports/urls.txt --out-dir ./reports -
 ### Scan by crawling from a start URL
 
 ```bash
+node scripts/a11y-audit.mjs --crawl --start https://www.example.com --out-dir ./reports
+```
+
+By default `--crawl` has no page limit — it keeps following same-origin links until it runs out of new pages to discover. On sites with large amounts of dynamically-generated content (per-user fundraiser pages, per-event pages, per-listing pages, etc.), this can explode into tens of thousands of unique URLs that all render from the same template and all fail/timeout the same way, making the crawl take hours. Use the crawl-limiting flags below to control this.
+
+| Flag | Description |
+|------|-------------|
+| `--max-pages <n>` | Stop discovery once this many pages have been found |
+| `--max-depth <n>` | Only follow links up to this many hops from the start URL |
+| `--top-level` | Keep homepage and one-segment paths only |
+| `--max-path-depth <n>` | Keep URLs with path depth `n` or shallower |
+| `--max-per-pattern <n>` | Cap how many pages get crawled per URL "template" (see below) |
+| `--nav-timeout-ms <ms>` | Per-page navigation timeout during crawling (default `60000`) |
+| `--exclude-path <filter>` | Comma-separated substrings — skip any discovered URL containing one |
+| `--include-path <filter>` | Comma-separated substrings — only follow URLs containing one |
+| `--quick` | Fast top-level first-pass preset |
+| `--lite` | Preset for a fast, representative scan (see below) |
+
+`--max-per-pattern` groups URLs by "template": path segments that look like an id, hash, or per-record slug (e.g. numeric segments, long alphanumeric ids) are collapsed to `:id` before comparing. So `/participants/mypage/1178067/2026` and `/participants/mypage/1186529/2026` are treated as the same template, and only the first `<n>` pages found for that template are crawled — the rest are skipped instead of queued. This is usually the single biggest lever for taming crawls on sites with unlimited per-record pages.
+
+```bash
+# Cap total pages
 node scripts/a11y-audit.mjs --crawl --start https://www.example.com --max-pages 50 --out-dir ./reports
+
+# Skip an entire section of dynamically-generated pages
+node scripts/a11y-audit.mjs --crawl --start https://www.example.com \
+  --exclude-path "/participants/mypage/,/events/,/donors" --out-dir ./reports
+
+# Only crawl 3 pages per URL template, 2 hops deep
+node scripts/a11y-audit.mjs --crawl --start https://www.example.com \
+  --max-depth 2 --max-per-pattern 3 --out-dir ./reports
+```
+
+#### Lite scan
+
+`--lite` bundles sane defaults for a quick, representative audit instead of an exhaustive crawl: `--max-pages 40 --max-depth 2 --max-per-pattern 3 --nav-timeout-ms 20000` (any of these can still be overridden individually). It also works with `--urls-file` and with `run-audit.mjs` (as a page-count cap), since it just narrows what gets scanned rather than being crawl-only.
+
+```bash
+node scripts/a11y-audit.mjs --crawl --start https://www.example.com --lite --out-dir ./reports
+node scripts/run-audit.mjs --site https://www.example.com --lite
+```
+
+#### Quick scan
+
+`--quick` is the package-friendly first-pass preset. It uses lite scan settings, keeps top-level URLs only, and caps the default full workflow at 25 pages.
+
+```bash
+universal-a11y-audit quick --site https://www.example.com
+universal-a11y-audit audit --site https://www.example.com --quick
+universal-a11y-audit scan --crawl --start https://www.example.com --quick --out-dir ./reports
 ```
 
 ### Generate only the Markdown summary
@@ -371,6 +504,7 @@ When installed globally via npm, all commands are available through the `univers
 | Command | Description |
 |---------|-------------|
 | `audit --site <url>` | Full workflow: build URLs, scan, summary, ticket CSV, visual dashboard |
+| `quick --site <url>` | Fast top-level first pass using lite limits |
 | `build-urls --site <url> --out <path>` | Build a URL list from sitemap discovery |
 | `scan --urls-file <path> --out-dir <path>` | Run Playwright + axe-core + agentic scan |
 | `report --run-dir <path>` | Generate the docs-ready Markdown summary |
@@ -382,6 +516,7 @@ When installed globally via npm, all commands are available through the `univers
 
 ```bash
 universal-a11y-audit audit --site https://www.example.com
+universal-a11y-audit quick --site https://www.example.com
 universal-a11y-audit audit --site https://www.example.com --slow --respect-robots --cloudflare-aware
 universal-a11y-audit audit --site https://www.example.com --brand-config ./branding.json
 universal-a11y-audit build-urls --site https://www.example.com --out ./reports/urls.txt
@@ -397,6 +532,7 @@ universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./rep
 | Script | Description |
 |--------|-------------|
 | `pnpm audit` | Full audit against example.com |
+| `pnpm audit:quick` | Quick top-level first pass against example.com |
 | `pnpm audit:crawl` | Crawl-based audit (max 50 pages) |
 | `pnpm audit:urls` | Scan from a pre-built URL list |
 | `pnpm audit:slow` | Full audit in slow/protected-site mode |
