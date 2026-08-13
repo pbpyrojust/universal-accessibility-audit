@@ -75,6 +75,8 @@ npm publish --access public
 
 Because this is a **scoped public package**, `--access public` is required for the first public publish.
 
+Local manual publishing does not generate npm provenance. Provenance is handled by the GitHub Actions workflow after Trusted Publishing is configured.
+
 ---
 
 ## Set up automatic npm publishing from GitHub Actions
