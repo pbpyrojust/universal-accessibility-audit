@@ -67,6 +67,17 @@ Log in locally:
 npm login
 ```
 
+Make sure the npm account is allowed to publish. npm requires one of these before direct publishing:
+
+- two-factor authentication enabled on your npm account
+- a granular access token with **Bypass 2FA** enabled
+
+For an interactive first publish, the simplest path is to enable 2FA on npmjs.com, then publish from the terminal. npm may prompt for a one-time password, or you can pass it directly:
+
+```bash
+npm publish --access public --otp 123456
+```
+
 Then publish the package manually once:
 
 ```bash
