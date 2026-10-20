@@ -33,6 +33,7 @@ Commands:
   tickets               Generate the GitHub/backlog ticket CSV
   visual-report         Generate the branded HTML dashboard + PDF report
   sitemap-xml-to-urls   Convert a browser-saved sitemap XML file into urls.txt
+  upload                Send a finished run to the Universal Accessibility Audit WordPress plugin
   help                  Show this help
   version               Show package version
 
@@ -51,6 +52,7 @@ Examples:
   universal-a11y-audit tickets --run-dir ./reports/<run-id>
   universal-a11y-audit visual-report --run-dir ./reports/<run-id> --site https://www.example.com --brand-config ./branding.json
   universal-a11y-audit sitemap-xml-to-urls --input ./saved-sitemap.xml --out ./reports/urls.txt
+  UAA_REPORT_URL=... UAA_REPORT_SECRET=... universal-a11y-audit upload --reports-dir ./reports --site https://www.example.com
   universal-a11y-audit audit --site https://staging.example.com --http-username myuser --http-password mypass
   universal-a11y-audit audit --site https://staging.example.com --auth-config ./auth.local.json
 
@@ -98,6 +100,9 @@ switch (command) {
     break;
   case "visual-report":
     run("generate-a11y-visual-report.mjs", rest);
+    break;
+  case "upload":
+    run("upload-to-wordpress.mjs", rest);
     break;
   case "sitemap-xml-to-urls":
     run("convert-sitemap-xml-to-urls.mjs", rest);

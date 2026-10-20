@@ -2,7 +2,7 @@
 
 **Package:** `@pbpyrojust/universal-accessibility-audit`
 **CLI commands:** `universal-a11y-audit`, `uaaudit`
-**Version:** 0.2.11
+**Version:** 0.3.0
 
 A CLI toolkit for WCAG accessibility audits and browser-native AI readiness scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs. Built for development, staging, protected, and production sites.
 
@@ -21,7 +21,7 @@ For exhaustive work, use `audit` and tune scope with `--batch-size`, `--include-
 ## Features
 
 - Sitemap-first URL discovery with WordPress, Yoast, Drupal, and standard sitemap.xml support
-- Playwright + axe-core WCAG 2.1 Level AA scanning
+- Playwright + axe-core (4.14) scanning against WCAG 2.2 Level A/AA by default (2.1 and 2.0 selectable), with optional Section 508, EN 301 549 (European Accessibility Act), WCAG AAA and best-practice rule sets
 - Agentic Lighthouse-style scoring for browser-native AI readiness
 - Image alt text inventory with readability ratings
 - Manual browser-saved sitemap XML fallback for protected sites
@@ -265,6 +265,22 @@ export A11Y_LOGIN_USERNAME=your-user
 export A11Y_LOGIN_PASSWORD=your-pass
 ```
 
+### Extra request headers and WCAG 2.2
+
+Two environment variables apply to every step (sitemap discovery and the browser scan):
+
+| Variable | Description |
+|----------|-------------|
+| `A11Y_EXTRA_HEADERS` | Extra HTTP headers sent with every request: a JSON object, or `Name: value` pairs separated by newlines or semicolons. Use it for protected previews, e.g. Vercel's `x-vercel-protection-bypass`. |
+| `A11Y_WCAG_VERSION` | WCAG version for the axe run, levels A and AA: `2.2` (default since 0.3.0), `2.1` or `2.0`. |
+| `A11Y_STANDARDS` | Extra rule sets, comma separated: `aaa` (WCAG AAA rules axe can test), `section508` (US Section 508), `en301549` (EN 301 549, the standard behind the European Accessibility Act), `best-practice` (axe best practices, not WCAG). Recorded in `a11y-run-metadata.json` as `standards`. |
+
+```bash
+A11Y_STANDARDS=en301549 \
+A11Y_EXTRA_HEADERS='x-vercel-protection-bypass: <secret>' \
+universal-a11y-audit audit --site https://preview.example.com
+```
+
 ### Important security note
 
 Do **not** commit real auth config files, credentials, or environment files.
@@ -496,6 +512,30 @@ Extract URLs from a locally saved sitemap XML file:
 ```bash
 node scripts/convert-sitemap-xml-to-urls.mjs --input ./saved-sitemap.xml --out ./reports/urls.txt
 ```
+
+## Send results to WordPress
+
+The [Universal Accessibility Audit WordPress plugin](https://wordpress.justwhat.net/accessibility-audit/) (Pro add-on) keeps every run, violation, image alt-text finding and ticket in wp-admin. After a run, send it there:
+
+```bash
+UAA_REPORT_URL=https://example.com/wp-json/uaa/v1/runs \
+UAA_REPORT_SECRET=<from Accessibility → Settings in the Pro add-on> \
+universal-a11y-audit upload --reports-dir ./reports --site https://www.example.com --mode full --wcag 2.2
+```
+
+It sends the newest run in `--reports-dir` (or `--run-dir <dir>`). `--dry-run` prints what would be sent.
+
+## Part of Vinny
+
+This scanner is the free, open-source engine behind [Vinny](https://vinny.justwhat.net) (scheduled scans, history, AI fixes and an agent, for any website) and the [WordPress plugins](https://wordpress.justwhat.net). Everything here stays free.
+
+## What's new in 0.3.0
+
+- WCAG 2.2 is the default (`A11Y_WCAG_VERSION=2.1` or `2.0` for older targets).
+- `A11Y_STANDARDS`: add Section 508, EN 301 549, WCAG AAA or best-practice rules.
+- `A11Y_EXTRA_HEADERS`: scan protected previews (for example Vercel Deployment Protection).
+- `upload` command: send a run to the WordPress plugin.
+- axe-core 4.14 and Playwright 1.64; slow pages get a settle wait before scanning.
 
 ## CLI commands reference
 

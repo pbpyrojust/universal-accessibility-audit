@@ -14,6 +14,7 @@
  *   scripts/convert-sitemap-xml-to-urls.mjs
  */
 
+import { extraHeaders } from "./request-options.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -89,6 +90,7 @@ async function fetchText(url, timeoutMs = 30000) {
       headers: {
         "user-agent": "Universal-A11y-Audit URL Builder",
         "accept": "text/plain, application/xml, text/xml, */*",
+        ...extraHeaders(),
       },
     });
     const text = await res.text();

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { extraHeaders, extraStandards, wcagTags, wcagVersion } from "./request-options.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -212,6 +213,7 @@ async function fetchText(url, timeoutMs = 30000) {
       headers: {
         "user-agent": "Universal-A11y-Audit",
         "accept": "text/plain, text/html, application/xml, text/xml, */*",
+        ...extraHeaders(),
       },
     });
     return { ok: res.ok, status: res.status, text: await res.text() };
@@ -282,7 +284,8 @@ async function crawlInternalLinks(page, startUrl, maxPages, opts = {}) {
     visited++;
     let newLinks = 0;
     try {
-      await page.goto(current, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: navTimeoutMs });
+      await page.goto(current, { waitUntil: slow ? "domcontentloaded" : "load", timeout: navTimeoutMs });
+      await settle(page, slow);
       if (crawlDelayMs > 0) await sleep(crawlDelayMs);
       if (depth < maxDepth) {
         const hrefs = await page.$$eval("a[href]", (as) => as.map((a) => a.getAttribute("href")).filter(Boolean));
@@ -325,14 +328,24 @@ async function crawlInternalLinks(page, startUrl, maxPages, opts = {}) {
   return Array.from(seen);
 }
 
+/**
+ * Give the page a few seconds to go quiet, then scan either way. Waiting
+ * for "networkidle" outright never finished on pages that keep a
+ * connection open (chat widgets, analytics beacons, live embeds): each
+ * one hit the navigation timeout and its retries.
+ */
+async function settle(page, slow) {
+  await page.waitForLoadState("networkidle", { timeout: slow ? 15000 : 8000 }).catch(() => {});
+}
+
 async function runAxe(page) {
   await page.addScriptTag({ path: axePath });
-  return await page.evaluate(async () => {
+  return await page.evaluate(async (tags) => {
     return await axe.run(document, {
-      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
+      runOnly: { type: "tag", values: tags },
       resultTypes: ["violations"],
     });
-  });
+  }, wcagTags());
 }
 
 
@@ -576,7 +589,8 @@ async function gotoWithRetry(page, url, opts = {}) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const stopHeartbeat = createHeartbeat(`${decodeUrlForDisplay(url)} (navigation attempt ${attempt + 1}/${retries + 1})`, 10000);
     try {
-      const response = await page.goto(url, { waitUntil: slow ? "domcontentloaded" : "networkidle", timeout: timeoutMs });
+      const response = await page.goto(url, { waitUntil: slow ? "domcontentloaded" : "load", timeout: timeoutMs });
+      await settle(page, slow);
       await page.waitForTimeout(slow ? 2000 : 800);
       const html = await page.content();
       const bot = cfAware ? detectBotChallengeHtml(html, response?.status?.() || 0) : { detected: false, type: "", status: 0 };
@@ -934,7 +948,7 @@ async function main() {
     if (includePaths.length) statusMsg('✅', c.cyan, `Including only paths containing: ${c.bold}${includePaths.join(', ')}${c.reset}`);
     if (Number.isFinite(maxPathDepth)) statusMsg('↕', c.brightYellow, `Keeping URLs at path depth ${c.bold}${maxPathDepth}${c.reset} or shallower.`);
     const browser = await chromium.launch({ headless: true });
-    const crawlContextOptions = {};
+    const crawlContextOptions = { extraHTTPHeaders: extraHeaders() };
     if (auth.httpCredentials) crawlContextOptions.httpCredentials = auth.httpCredentials;
     const context = await browser.newContext(crawlContextOptions);
     const page = await context.newPage();
@@ -984,7 +998,7 @@ async function main() {
   const scanStart = Date.now();
   statusMsg('◐', c.cyan, 'Launching headless browser...');
   const browser = await chromium.launch({ headless: true });
-  const contextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)" };
+  const contextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)", extraHTTPHeaders: extraHeaders() };
   if (auth.httpCredentials) contextOptions.httpCredentials = auth.httpCredentials;
   let context = await browser.newContext(contextOptions);
   let page = await context.newPage();
@@ -1016,7 +1030,7 @@ async function main() {
 
     if (idx > 1 && (idx - 1) % contextRecycleInterval === 0) {
       await context.close();
-      const freshContextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)" };
+      const freshContextOptions = { userAgent: "Universal-A11y-Audit (Playwright + axe-core)", extraHTTPHeaders: extraHeaders() };
       if (auth.httpCredentials) freshContextOptions.httpCredentials = auth.httpCredentials;
       context = await browser.newContext(freshContextOptions);
       page = await context.newPage();
@@ -1225,6 +1239,8 @@ async function main() {
 
   const meta = {
     runId,
+    wcagVersion: wcagVersion(),
+    standards: extraStandards(),
     startedAt: new Date(startedAt).toISOString(),
     finishedAt: new Date().toISOString(),
     pagesScanned: urls.length,

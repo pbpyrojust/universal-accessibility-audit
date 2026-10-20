@@ -20,12 +20,12 @@
     "release:tag": "node -e \"const p=require('./package.json'); console.log('git tag v'+p.version+' && git push origin v'+p.version)\""
   },
   "dependencies": {
-    "axe-core": "^4.11.1",
-    "csv-stringify": "^6.6.0",
-    "fast-xml-parser": "^5.3.3",
-    "playwright": "^1.57.0"
+    "axe-core": "^4.14.0",
+    "csv-stringify": "^6.9.0",
+    "fast-xml-parser": "^5.11.2",
+    "playwright": "^1.64.1"
   },
-  "version": "0.2.14",
+  "version": "0.3.1",
   "description": "CLI toolkit for WCAG accessibility audits and Agentic Lighthouse scoring with sitemap discovery, Playwright + axe-core scanning, and ticket-ready outputs.",
   "author": "Justin Adams (https://justwhat.net)",
   "homepage": "https://github.com/pbpyrojust/universal-accessibility-audit#readme",
