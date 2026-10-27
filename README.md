@@ -515,7 +515,7 @@ node scripts/convert-sitemap-xml-to-urls.mjs --input ./saved-sitemap.xml --out .
 
 ## Send results to WordPress
 
-The [Universal Accessibility Audit WordPress plugin](https://wordpress.justwhat.net/accessibility-audit/) (Pro add-on) keeps every run, violation, image alt-text finding and ticket in wp-admin. After a run, send it there:
+The [Universal Accessibility Audit WordPress plugin](https://wordpress.justwhat.net/accessibility-audit/) ([Pro add-on](https://wordpress.justwhat.net/pricing/)) keeps every run, violation, image alt-text finding and ticket in wp-admin. After a run, send it there:
 
 ```bash
 UAA_REPORT_URL=https://example.com/wp-json/uaa/v1/runs \
@@ -523,18 +523,22 @@ UAA_REPORT_SECRET=<from Accessibility → Settings in the Pro add-on> \
 universal-a11y-audit upload --reports-dir ./reports --site https://www.example.com --mode full --wcag 2.2
 ```
 
+Where to find the URL and secret: [Pro setup](https://wordpress.justwhat.net/docs/pro-setup/).
+
 It sends the newest run in `--reports-dir` (or `--run-dir <dir>`). `--dry-run` prints what would be sent.
 
 ## Part of Vinny
 
-This scanner is the free, open-source engine behind [Vinny](https://vinny.justwhat.net) (scheduled scans, history, AI fixes and an agent, for any website) and the [WordPress plugins](https://wordpress.justwhat.net). Everything here stays free.
+This scanner is the free, open-source engine behind the [accessibility checks in Vinny](https://vinny.justwhat.net/features/#accessibility). Everything here stays free. [Vinny](https://vinny.justwhat.net) adds, for any website: [scheduled full-site scans](https://vinny.justwhat.net/features/) with history and alerts, [AI fix suggestions](https://vinny.justwhat.net/features/) for alt text and other copy, fix tickets, and [SEO with rank tracking](https://vinny.justwhat.net/features/#seo) ([free for one site](https://vinny.justwhat.net/pricing/)).
+
+On WordPress, the free [Universal Accessibility Audit plugin](https://wordpress.justwhat.net/accessibility-audit/) scans from wp-admin, and [Pro](https://wordpress.justwhat.net/pricing/) adds scheduled full-site scans run by Vinny, history and alerts ([Pro setup](https://wordpress.justwhat.net/docs/pro-setup/)).
 
 ## What's new in 0.3.0
 
 - WCAG 2.2 is the default (`A11Y_WCAG_VERSION=2.1` or `2.0` for older targets).
 - `A11Y_STANDARDS`: add Section 508, EN 301 549, WCAG AAA or best-practice rules.
 - `A11Y_EXTRA_HEADERS`: scan protected previews (for example Vercel Deployment Protection).
-- `upload` command: send a run to the WordPress plugin.
+- `upload` command: send a run to the [WordPress plugin](https://wordpress.justwhat.net/accessibility-audit/).
 - axe-core 4.14 and Playwright 1.64; slow pages get a settle wait before scanning.
 
 ## CLI commands reference
